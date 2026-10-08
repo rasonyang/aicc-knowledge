@@ -9,3 +9,9 @@
 # model is a ~2.5 GB download plus a llama.cpp build, too heavy for every run.
 # The generation pipeline is covered in CI by the llmtest fake.
 generate.TestRealLLM
+
+# Cross-check the parsers against the officecli CLI, a local developer tool
+# that CI does not install. The parsers themselves are covered in CI by the
+# golden tests; these only add an independent reader where one is available.
+docx.TestRealConsumer
+xlsx.TestRealConsumer
