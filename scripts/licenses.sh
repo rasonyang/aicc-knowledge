@@ -29,8 +29,16 @@ cat > "$work/tmpl" <<'TMPL'
 {{end}}
 TMPL
 
-if ! go run "$GO_LICENSES" report ./cmd/aicc-knowledge --template "$work/tmpl" \
-	> "$work/report" 2> "$work/err"; then
+# The dependency graph depends on the target platform (prometheus/procfs, for
+# one, is compiled in on linux only), so the report is always taken for the
+# platform the image ships, whatever host runs it. The tool itself is built
+# for the host; only the analysis is cross-platform.
+TARGET_GOOS=${LICENSES_GOOS:-linux}
+TARGET_GOARCH=${LICENSES_GOARCH:-amd64}
+GOBIN="$work/bin" GOOS= GOARCH= go install "$GO_LICENSES"
+
+if ! GOOS=$TARGET_GOOS GOARCH=$TARGET_GOARCH "$work/bin/go-licenses" report ./cmd/aicc-knowledge \
+	--template "$work/tmpl" > "$work/report" 2> "$work/err"; then
 	cat "$work/err" >&2
 	echo "go-licenses failed" >&2
 	exit 1

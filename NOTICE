@@ -10,8 +10,9 @@ licenses and their NOTICE texts are reproduced in full in THIRD_PARTY_LICENSES
 
 Prometheus instrumentation library for Go applications
 (github.com/prometheus/client_golang), its data model
-(github.com/prometheus/client_model) and common libraries
-(github.com/prometheus/common)
+(github.com/prometheus/client_model), common libraries
+(github.com/prometheus/common) and procfs (github.com/prometheus/procfs,
+compiled in on linux)
 Copyright 2012-2015 The Prometheus Authors
 This product includes software developed at SoundCloud Ltd.
 (http://soundcloud.com/).
