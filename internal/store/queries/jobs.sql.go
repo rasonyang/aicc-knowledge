@@ -130,7 +130,7 @@ func (q *Queries) CompleteJob(ctx context.Context, arg CompleteJobParams) (int64
 const enqueueJob = `-- name: EnqueueJob :execrows
 
 INSERT INTO jobs (kind, payload, dedupe_key, max_attempts, run_after)
-VALUES ($1, $2, $3, $4, COALESCE($5::timestamptz, now()))
+VALUES ($1, $2, $3, $4, COALESCE($5::timestamptz, '-infinity'::timestamptz))
 ON CONFLICT (kind, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
 `
 
@@ -144,6 +144,11 @@ type EnqueueJobParams struct {
 
 // SPDX-License-Identifier: Apache-2.0
 // Idempotent per (kind, dedupe_key): a repeat returns 0 rows affected.
+// A job with no run_after is due immediately: it is stored as -infinity, not as
+// now(), so that it is claimable whatever clock the claiming backend reads. Two
+// backends of one server can disagree by hundreds of milliseconds (virtual
+// machines with per-CPU counter offsets), and a now() taken by a backend that
+// runs ahead would keep a job just committed invisible to the next claim.
 func (q *Queries) EnqueueJob(ctx context.Context, arg EnqueueJobParams) (int64, error) {
 	result, err := q.db.Exec(ctx, enqueueJob,
 		arg.Kind,
@@ -246,7 +251,7 @@ func (q *Queries) GetJob(ctx context.Context, id uuid.UUID) (Job, error) {
 
 const rearmJob = `-- name: RearmJob :execrows
 UPDATE jobs
-SET state = 'QUEUED', attempts = 0, run_after = now(), finished_at = NULL,
+SET state = 'QUEUED', attempts = 0, run_after = '-infinity'::timestamptz, finished_at = NULL,
     locked_until = NULL, locked_by = NULL, last_error_code = NULL, last_error_message = NULL
 WHERE kind = $1 AND dedupe_key = $2::text AND state IN ('SUCCEEDED', 'FAILED')
 `

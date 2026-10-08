@@ -14,6 +14,7 @@ import (
 
 	"github.com/rasonyang/aicc-knowledge/internal/jobs"
 	"github.com/rasonyang/aicc-knowledge/internal/store"
+	"github.com/rasonyang/aicc-knowledge/internal/store/queries"
 	"github.com/rasonyang/aicc-knowledge/internal/testdb"
 )
 
@@ -319,5 +320,47 @@ func TestExtendKeepsALongJobFromBeingReclaimed(t *testing.T) {
 	}
 	if err := q.Extend(ctx, j.ID, "someone-else", time.Hour); !errors.Is(err, jobs.ErrLeaseLost) {
 		t.Fatalf("Extend by a stranger = %v, want LEASE_LOST", err)
+	}
+}
+
+// TestAJobEnqueuedByABackendWhoseClockRunsAheadIsStillClaimable pins the fix of
+// a flake seen on virtual machines whose CPUs have counter offsets of several
+// hundred milliseconds: two backends of one server then read different now()s,
+// and a job stamped run_after = now() by the backend that runs ahead stayed
+// invisible to the next claim for as long as the offset lasted. The test makes
+// the enqueuing connection's now() run 10 minutes ahead (a function in a schema
+// ahead of pg_catalog on that session's search_path shadows now()) and requires the claim,
+// on an ordinary connection, to find the job at once.
+func TestAJobEnqueuedByABackendWhoseClockRunsAheadIsStillClaimable(t *testing.T) {
+	ctx := context.Background()
+	s, q := open(t)
+
+	conn, err := s.Pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	for _, stmt := range []string{
+		`CREATE SCHEMA fastclock`,
+		`CREATE FUNCTION fastclock.now() RETURNS timestamptz LANGUAGE sql AS $$ SELECT clock_timestamp() + interval '10 minutes' $$`,
+		`SET search_path = fastclock, public, pg_catalog`,
+	} {
+		if _, err := conn.Exec(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var ahead time.Time
+	if err := conn.QueryRow(ctx, `SELECT now()`).Scan(&ahead); err != nil || time.Until(ahead) < 9*time.Minute {
+		t.Fatalf("the shadowing now() is not in effect: %v, %v", ahead, err)
+	}
+	enqueue := jobs.New(queries.New(conn))
+	add(t, enqueue, jobs.Enqueue{Kind: jobs.KindParse, DedupeKey: "ahead"})
+	add(t, enqueue, jobs.Enqueue{Kind: jobs.KindGenerate, DedupeKey: "ahead"})
+
+	if _, err := q.ClaimByKey(ctx, "w", time.Minute, jobs.KindParse, "ahead"); err != nil {
+		t.Fatalf("ClaimByKey = %v, want the job enqueued by the fast-clock backend", err)
+	}
+	if _, err := q.Claim(ctx, "w", time.Minute, jobs.KindGenerate); err != nil {
+		t.Fatalf("Claim = %v, want the job enqueued by the fast-clock backend", err)
 	}
 }

@@ -2,8 +2,13 @@
 
 -- name: EnqueueJob :execrows
 -- Idempotent per (kind, dedupe_key): a repeat returns 0 rows affected.
+-- A job with no run_after is due immediately: it is stored as -infinity, not as
+-- now(), so that it is claimable whatever clock the claiming backend reads. Two
+-- backends of one server can disagree by hundreds of milliseconds (virtual
+-- machines with per-CPU counter offsets), and a now() taken by a backend that
+-- runs ahead would keep a job just committed invisible to the next claim.
 INSERT INTO jobs (kind, payload, dedupe_key, max_attempts, run_after)
-VALUES (sqlc.arg(kind), sqlc.arg(payload), sqlc.narg(dedupe_key), sqlc.arg(max_attempts), COALESCE(sqlc.narg(run_after)::timestamptz, now()))
+VALUES (sqlc.arg(kind), sqlc.arg(payload), sqlc.narg(dedupe_key), sqlc.arg(max_attempts), COALESCE(sqlc.narg(run_after)::timestamptz, '-infinity'::timestamptz))
 ON CONFLICT (kind, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING;
 
 -- name: ReclaimExpiredJobs :execrows
@@ -76,7 +81,7 @@ SELECT * FROM jobs WHERE id = $1;
 -- Operator retry: puts a finished job back in the queue with a fresh attempt
 -- budget. A QUEUED or RUNNING job is left alone.
 UPDATE jobs
-SET state = 'QUEUED', attempts = 0, run_after = now(), finished_at = NULL,
+SET state = 'QUEUED', attempts = 0, run_after = '-infinity'::timestamptz, finished_at = NULL,
     locked_until = NULL, locked_by = NULL, last_error_code = NULL, last_error_message = NULL
 WHERE kind = sqlc.arg(kind) AND dedupe_key = sqlc.arg(dedupe_key)::text AND state IN ('SUCCEEDED', 'FAILED');
 

@@ -422,7 +422,7 @@ func TestChangedObjectAfterTheScanIsSkippedNotParsedUnderTheOldVersion(t *testin
 func TestAJobForAMissingVersionFailsTheJobNotTheRun(t *testing.T) {
 	e := parsetest.New(t)
 	_, err := e.Store.Pool.Exec(context.Background(),
-		`INSERT INTO jobs (kind, payload, dedupe_key, max_attempts) VALUES ('PARSE', jsonb_build_object('fileVersionId', $1::text), 'x', 1)`, uuid.NewString())
+		`INSERT INTO jobs (kind, payload, dedupe_key, max_attempts, run_after) VALUES ('PARSE', jsonb_build_object('fileVersionId', $1::text), 'x', 1, '-infinity')`, uuid.NewString())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -218,7 +218,16 @@ func TestASheetClaimedByFactsAndQAIsACodedError(t *testing.T) {
 	e.PutFixture("pricing.xlsx", "xlsx/pricing.xlsx")
 	e.Put("pricing.facts.yaml", parsetest.PricingMapping(t))
 	e.Put("pricing.qa.yaml", []byte("sheets:\n  - {sheet: Pricing, headerRows: 1, question: Plan, answer: Region}\n"))
-	e.ScanParse()
+	e.Scan()
+	// The workbook fails only when it is parsed after both mappings; a mapping
+	// that arrives later only records the conflict as a warning (the blame
+	// rule). Jobs are claimed in no guaranteed order, so pin the order here.
+	wb, _ := e.Current("pricing.xlsx")
+	if _, err := e.Store.Pool.Exec(context.Background(),
+		`UPDATE jobs SET run_after = 'epoch' WHERE kind = 'PARSE' AND dedupe_key = $1`, wb.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.Parse()
 	wv, _ := e.Current("pricing.xlsx")
 	if wv.State != "PARSE_FAILED" || wv.ErrCode != "QA_SHEET_CONFLICT" || !strings.Contains(wv.Warnings, `"Pricing"`) {
 		t.Fatalf("workbook = %+v", wv)
