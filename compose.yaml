@@ -1,0 +1,116 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Dev stack: the app, PostgreSQL, Meilisearch, TEI (bge-m3 embeddings) and
+# SeaweedFS (S3). Everything binds to 127.0.0.1.
+#
+#   make dev-up        # databases and search only (what `make test` needs)
+#   docker compose up -d --build    # the whole stack, TEI included
+#
+# Host ports are chosen to stay clear of common local services (8080, 5432,
+# 7700, 8333). Override any of them in the environment or in .env:
+#   KB_PORT_APP KB_PORT_OPS KB_PORT_POSTGRES KB_PORT_MEILI KB_PORT_TEI KB_PORT_S3
+#
+# TEI: the default image is amd64 only. On Apple silicon set
+#   KB_TEI_IMAGE=ghcr.io/huggingface/text-embeddings-inference:cpu-arm64-1.9.4
+# The first start downloads about 2.2 GB of model weights into the tei-data
+# volume (roughly 12 minutes on a slow link); later starts take about 20
+# seconds. --max-batch-tokens 4096 keeps memory near 6 GiB; at the default
+# 16384 the container was OOM-killed on a VM with 11.6 GiB free. Give Docker at
+# least 8 GiB.
+
+name: aicc-knowledge
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        VERSION: dev
+    image: aicc-knowledge:dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    environment:
+      KB_ENV: dev
+      KB_HTTP_ADDR: ":8080"
+      KB_OPS_ADDR: "0.0.0.0:9090"
+      KB_DATABASE_URL: postgres://kb:kb@postgres:5432/kb?sslmode=disable
+      KB_MEILI_URL: http://meilisearch:7700
+      KB_MEILI_API_KEY: ${KB_MEILI_API_KEY:-dev-master-key-0123456789}
+      KB_TEI_URL: http://tei:80
+      KB_S3_ENDPOINT: http://seaweedfs:8333
+      KB_S3_BUCKET: aicc-knowledge
+      KB_S3_USE_PATH_STYLE: "true"
+      KB_S3_ACCESS_KEY_ID: ${KB_S3_ACCESS_KEY_ID:-dev}
+      KB_S3_SECRET_ACCESS_KEY: ${KB_S3_SECRET_ACCESS_KEY:-dev-secret}
+      KB_SEARCH_SCOPE_KEYS: ${KB_SEARCH_SCOPE_KEYS:-}
+    command: ["serve"]
+    ports:
+      - "127.0.0.1:${KB_PORT_APP:-18480}:8080"
+      - "127.0.0.1:${KB_PORT_OPS:-18490}:9090"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: kb
+      POSTGRES_PASSWORD: kb
+      POSTGRES_DB: kb
+    ports:
+      - "127.0.0.1:${KB_PORT_POSTGRES:-15432}:5432"
+    # PostgreSQL 18 images keep the data directory under /var/lib/postgresql.
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kb -d kb"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.54.3
+    environment:
+      MEILI_ENV: development
+      MEILI_MASTER_KEY: ${KB_MEILI_API_KEY:-dev-master-key-0123456789}
+      MEILI_NO_ANALYTICS: "true"
+    ports:
+      - "127.0.0.1:${KB_PORT_MEILI:-17700}:7700"
+    volumes:
+      - meili-data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7700/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  tei:
+    image: ${KB_TEI_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.4}
+    command: ["--model-id", "BAAI/bge-m3", "--max-batch-tokens", "4096"]
+    ports:
+      - "127.0.0.1:${KB_PORT_TEI:-18088}:80"
+    volumes:
+      - tei-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:80/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 120
+      start_period: 30s
+
+  # `weed mini` runs master, volume, filer and the S3 gateway in one process
+  # and creates the bucket on start.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.42
+    command: ["mini", "-dir=/data", "-bucket=aicc-knowledge"]
+    ports:
+      - "127.0.0.1:${KB_PORT_S3:-18333}:8333"
+    volumes:
+      - seaweedfs-data:/data
+
+volumes:
+  postgres-data:
+  meili-data:
+  tei-data:
+  seaweedfs-data:

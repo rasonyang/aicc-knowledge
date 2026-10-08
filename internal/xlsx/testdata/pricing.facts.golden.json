@@ -1,0 +1,145 @@
+{
+  "table": "plan_prices",
+  "columns": [
+    {
+      "name": "plan",
+      "header": "Plan",
+      "type": "STRING"
+    },
+    {
+      "name": "monthly_price",
+      "header": "Price / Monthly",
+      "type": "DECIMAL",
+      "unit": "CNY",
+      "required": true
+    },
+    {
+      "name": "yearly_price",
+      "header": "Price / Yearly",
+      "type": "DECIMAL",
+      "unit": "CNY"
+    },
+    {
+      "name": "data_gb",
+      "header": "Data (GB)",
+      "type": "INTEGER",
+      "unit": "GB"
+    },
+    {
+      "name": "unlimited",
+      "header": "Unlimited",
+      "type": "BOOLEAN"
+    },
+    {
+      "name": "valid_from",
+      "header": "Validity / From",
+      "type": "DATE"
+    },
+    {
+      "name": "valid_to",
+      "header": "Validity / To",
+      "type": "DATE"
+    }
+  ],
+  "rows": [
+    {
+      "row": 3,
+      "sourceRef": "Pricing!A3:G3",
+      "values": {
+        "data_gb": 10,
+        "monthly_price": 9.9,
+        "plan": "Basic",
+        "unlimited": false,
+        "valid_from": "2024-01-01",
+        "valid_to": "2024-07-01",
+        "yearly_price": 99
+      },
+      "key": {
+        "plan": "Basic"
+      },
+      "validFrom": "2024-01-01",
+      "validTo": "2024-07-01"
+    },
+    {
+      "row": 4,
+      "sourceRef": "Pricing!A4:G4",
+      "values": {
+        "data_gb": 10,
+        "monthly_price": 8.9,
+        "plan": "Basic",
+        "unlimited": false,
+        "valid_from": "2024-07-01",
+        "valid_to": null,
+        "yearly_price": 89
+      },
+      "key": {
+        "plan": "Basic"
+      },
+      "validFrom": "2024-07-01",
+      "validTo": null
+    },
+    {
+      "row": 5,
+      "sourceRef": "Pricing!A5:G5",
+      "values": {
+        "data_gb": 100,
+        "monthly_price": 19.99,
+        "plan": "Pro",
+        "unlimited": false,
+        "valid_from": "2024-01-01",
+        "valid_to": "2024-07-01",
+        "yearly_price": 199.9
+      },
+      "key": {
+        "plan": "Pro"
+      },
+      "validFrom": "2024-01-01",
+      "validTo": "2024-07-01"
+    },
+    {
+      "row": 6,
+      "sourceRef": "Pricing!A6:G6",
+      "values": {
+        "data_gb": 100,
+        "monthly_price": 0.1,
+        "plan": "Pro",
+        "unlimited": false,
+        "valid_from": "2024-07-01",
+        "valid_to": null,
+        "yearly_price": 123456.789
+      },
+      "key": {
+        "plan": "Pro"
+      },
+      "validFrom": "2024-07-01",
+      "validTo": null
+    },
+    {
+      "row": 9,
+      "sourceRef": "Pricing!A9:G9",
+      "values": {
+        "data_gb": 500,
+        "monthly_price": 0.1,
+        "plan": "Max",
+        "unlimited": true,
+        "valid_from": "2024-01-01",
+        "valid_to": null,
+        "yearly_price": 1234567.891
+      },
+      "key": {
+        "plan": "Max"
+      },
+      "validFrom": "2024-01-01",
+      "validTo": null
+    }
+  ],
+  "issues": [],
+  "warnings": [
+    {
+      "code": "HIDDEN_ROW_SKIPPED",
+      "detail": "hidden row 7 excluded from import",
+      "location": "Pricing!A7:G7",
+      "row": 7
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "sections": [
+    {
+      "ordinal": 1,
+      "headingPath": [
+        "Plan Gold"
+      ],
+      "level": 1,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "Price is 12 yuan."
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "Merged part one, part two."
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "Alpha."
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "Beta. Moved text."
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "Inserted paragraph."
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "Formatting changed only."
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "Old properties were a heading; current ones are not."
+        }
+      ],
+      "sourceRef": "Plan Gold#1"
+    },
+    {
+      "ordinal": 2,
+      "headingPath": [
+        "Became a heading by style change"
+      ],
+      "level": 1,
+      "blocks": [
+        {
+          "kind": "TABLE",
+          "text": "Item | Qty\nAdded row | 3",
+          "table": {
+            "rows": [
+              [
+                "Item",
+                "Qty"
+              ],
+              [
+                "Added row",
+                "3"
+              ]
+            ]
+          }
+        }
+      ],
+      "sourceRef": "Became a heading by style change#2"
+    }
+  ],
+  "warnings": []
+}

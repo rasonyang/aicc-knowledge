@@ -1,0 +1,42 @@
+{
+  "sections": [
+    {
+      "ordinal": 1,
+      "headingPath": [
+        "Pricing"
+      ],
+      "text": "Plan | Price / Monthly | Price / Yearly | Data (GB) | Unlimited | Validity / From | Validity / To\nBasic | 9.9 | 99 | 10 | FALSE | 2024-01-01 | 2024-07-01\nBasic | 8.9 | 89 | 10 | FALSE | 2024-07-01 | ",
+      "firstRow": 3,
+      "lastRow": 4,
+      "sourceRef": "Pricing!A3:G4"
+    },
+    {
+      "ordinal": 2,
+      "headingPath": [
+        "Pricing"
+      ],
+      "text": "Plan | Price / Monthly | Price / Yearly | Data (GB) | Unlimited | Validity / From | Validity / To\nPro | 19.99 | 199.9 | 100 | FALSE | 2024-01-01 | 2024-07-01\nPro | 0.1 | 123456.789 | 100 | FALSE | 2024-07-01 | ",
+      "firstRow": 5,
+      "lastRow": 6,
+      "sourceRef": "Pricing!A5:G6"
+    },
+    {
+      "ordinal": 3,
+      "headingPath": [
+        "Pricing"
+      ],
+      "text": "Plan | Price / Monthly | Price / Yearly | Data (GB) | Unlimited | Validity / From | Validity / To\nMax | 0.1 | 1234567.891 | 500 | TRUE | 2024-01-01 | ",
+      "firstRow": 9,
+      "lastRow": 9,
+      "sourceRef": "Pricing!A9:G9"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "HIDDEN_ROW_SKIPPED",
+      "detail": "hidden row 7 excluded",
+      "location": "Pricing!A7:G7",
+      "row": 7
+    }
+  ]
+}

@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: Apache-2.0
+name: ci
+
+on:
+  pull_request:
+    paths: ['**', '!**/*.md']
+  push:
+    branches: [main]
+    paths: ['**', '!**/*.md']
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    # The tests run against a real PostgreSQL and a real Meilisearch, never
+    # mocks. The versions match compose.yaml. Without these services the
+    # database and search tests would be skipped silently, so the job sets the
+    # KB_TEST_* variables and the services are not optional.
+    services:
+      postgres:
+        image: postgres:18
+        env: { POSTGRES_USER: kb, POSTGRES_PASSWORD: kb, POSTGRES_DB: kb }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U kb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      meilisearch:
+        image: getmeili/meilisearch:v1.54.3
+        env:
+          MEILI_ENV: development
+          MEILI_MASTER_KEY: ci-master-key-0123456789
+          MEILI_NO_ANALYTICS: 'true'
+        ports: ['7700:7700']
+        options: >-
+          --health-cmd "curl -fsS http://127.0.0.1:7700/health"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      KB_TEST_DATABASE_URL: postgres://kb:kb@127.0.0.1:5432/kb?sslmode=disable
+      KB_TEST_MEILI_URL: http://127.0.0.1:7700
+      KB_TEST_MEILI_API_KEY: ci-master-key-0123456789
+      KB_TEST_S3_ENDPOINT: http://127.0.0.1:8333
+      KB_TEST_S3_ACCESS_KEY_ID: dev
+      KB_TEST_S3_SECRET_ACCESS_KEY: dev-secret
+      KB_TEST_S3_BUCKET: aicc-knowledge
+    steps:
+      # SeaweedFS is the S3 the scan tests run against. A service container
+      # cannot take a command, and `weed mini` is a command, so it is started
+      # here, the same image and flags as compose.yaml. Without identities it
+      # accepts any access key, as in the dev stack.
+      - name: Start SeaweedFS (S3)
+        run: |
+          docker run -d --name seaweedfs -p 127.0.0.1:8333:8333 chrislusf/seaweedfs:4.42 \
+            mini -dir=/data -bucket=aicc-knowledge
+          for i in $(seq 1 60); do
+            if curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8333/aicc-knowledge/ | grep -q '^200$'; then
+              echo "SeaweedFS S3 ready"; exit 0
+            fi
+            sleep 2
+          done
+          docker logs seaweedfs
+          echo "SeaweedFS did not become ready"; exit 1
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l cmd internal docs)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed:"; echo "$unformatted"; exit 1
+          fi
+      - name: sqlc output is current
+        run: |
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+          make sqlc-check
+      - name: THIRD_PARTY_LICENSES is current
+        run: make licenses-check
+      - name: Test
+        run: go test -race -count=1 ./...

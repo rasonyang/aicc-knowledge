@@ -1,0 +1,47 @@
+{
+  "sections": [
+    {
+      "ordinal": 1,
+      "headingPath": [
+        "Billing"
+      ],
+      "level": 1,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "Your bill is issued on the first day of each month and is payable within 15 days. A late payment is charged a late fee of 2 percent of the outstanding amount. You can pay by bank card, by bank transfer or at any service counter."
+        }
+      ],
+      "sourceRef": "Billing#1"
+    },
+    {
+      "ordinal": 2,
+      "headingPath": [
+        "Refunds"
+      ],
+      "level": 1,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "A refund request must be made within 30 days of the purchase. An approved refund is returned to the original payment method within 5 to 7 business days. Service fees are not refundable."
+        }
+      ],
+      "sourceRef": "Refunds#2"
+    },
+    {
+      "ordinal": 3,
+      "headingPath": [
+        "Plans and prices"
+      ],
+      "level": 1,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "The Basic plan costs 9.90 dollars per month and includes 10 GB of data. The Plus plan costs 19.90 dollars per month and includes 50 GB of data. The Max plan costs 39.90 dollars per month and includes unlimited data."
+        }
+      ],
+      "sourceRef": "Plans and prices#3"
+    }
+  ],
+  "warnings": []
+}

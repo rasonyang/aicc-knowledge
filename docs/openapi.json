@@ -1,0 +1,228 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AICC Knowledge API",
+    "version": "1.0.0",
+    "summary": "Read paths of the aicc-knowledge retrieval service.",
+    "description": "Single-tenant knowledge retrieval for the AI Native Call Center. AICC calls these two operations as ordinary flow HTTP tools; AICC never depends on this service. Conventions: lowerCamelCase properties, SCREAMING_SNAKE enum values, xxxMs durations in milliseconds, dates as RFC 3339 full-date. Every non-2xx response, including router 404 and 405, is the envelope {\"error\": {code, message, params}}. Errors carry codes, never localized strings. The unauthenticated ops endpoints (/metrics, /healthz, /readyz) are served on a separate listener and are not part of this contract.",
+    "license": { "name": "Apache-2.0", "identifier": "Apache-2.0" }
+  },
+  "servers": [{ "url": "/" }],
+  "tags": [
+    { "name": "search", "description": "Question-answer retrieval over the published FAQ indexes." },
+    { "name": "facts", "description": "Exact-match lookup in structured fact tables." }
+  ],
+  "security": [{ "apiKeyBearer": [] }],
+  "paths": {
+    "/v1/search": {
+      "post": {
+        "operationId": "searchFaq",
+        "tags": ["search"],
+        "summary": "Search the live FAQ index of one language",
+        "description": "Embeds the query, searches the live index of the language (faq_en or faq_zh) and returns up to topK items, best first. The live index only ever holds published content: a source change is not visible until it has been reviewed, approved and published. The status is NO_MATCH, with an empty items array, when no item reaches the configured score threshold of that language. The request budget is timeoutMs (capped by the service maximum, defaulted by the service) and covers embedding and search together: exceeding it answers 504 UPSTREAM_TIMEOUT. An unreachable embedding service or search index answers 503 UPSTREAM_UNAVAILABLE, and a language that has no live index yet answers 503 INDEX_UNAVAILABLE.",
+        "security": [{ "apiKeyBearer": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SearchRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "The search ran. status says whether anything matched.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SearchResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" },
+          "504": { "$ref": "#/components/responses/GatewayTimeout" }
+        }
+      }
+    },
+    "/v1/facts/{table}/lookup": {
+      "post": {
+        "operationId": "lookupFact",
+        "tags": ["facts"],
+        "summary": "Look up one row of a fact table by its key",
+        "description": "Exact-match lookup on the key columns of the table's mapping. The key must contain exactly the key columns; each value is checked against the column type (STRING: a string; INTEGER: an integer or a string of digits; DECIMAL: a number or a decimal string, compared by value; DATE: yyyy-mm-dd; BOOLEAN: true or false). Only rows whose validity interval [validFrom, validTo) contains the date `at` match; `at` defaults to today in the service time zone (KB_TIMEZONE). Answers 404 FACT_TABLE_NOT_FOUND for an unknown table, 503 FACT_TABLE_UNAVAILABLE while the table has no valid import (its workbook or mapping was removed, replaced or failed to import) and 422 VALIDATION_FAILED with params.missing, params.unknown or params.invalid for a key that does not fit.",
+        "security": [{ "apiKeyBearer": [] }],
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "description": "Fact table name, as declared in the sheet mapping.",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 128 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FactsLookupRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "The lookup ran. status says whether a row matched.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FactsLookupResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKeyBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "API key issued by the create-api-key command. The service stores only its SHA-256 digest."
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "The request body is not valid JSON. Code VALIDATION_FAILED.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "Unauthorized": {
+        "description": "The bearer API key is missing or unknown. Code UNAUTHORIZED.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "NotFound": {
+        "description": "The resource does not exist. Codes NOT_FOUND, FACT_TABLE_NOT_FOUND.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "UnprocessableEntity": {
+        "description": "The request is well-formed JSON but breaks a rule. Codes VALIDATION_FAILED, UNKNOWN_SCOPE_KEY.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "InternalError": {
+        "description": "An unexpected failure. Code INTERNAL.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "ServiceUnavailable": {
+        "description": "A dependency or the data is not available. Codes INDEX_UNAVAILABLE, FACT_TABLE_UNAVAILABLE, UPSTREAM_UNAVAILABLE, STORAGE_DOWN.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "GatewayTimeout": {
+        "description": "A dependency did not answer within the request timeout. Code UPSTREAM_TIMEOUT.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      }
+    },
+    "schemas": {
+      "Language": {
+        "type": "string",
+        "description": "Content language. EN maps to the index faq_en, ZH to faq_zh.",
+        "enum": ["EN", "ZH"]
+      },
+      "SearchRequest": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "minLength": 1, "maxLength": 1000, "description": "The caller's question." },
+          "language": { "$ref": "#/components/schemas/Language" },
+          "scope": {
+            "type": "object",
+            "description": "Exact-match filter. Every key must be one of the configured scope keys, otherwise the request fails with UNKNOWN_SCOPE_KEY. A published item that carries no value for a key (its source file path does not name one) is global for that key and matches any value of it.",
+            "additionalProperties": { "type": "string" }
+          },
+          "topK": { "type": "integer", "minimum": 1, "maximum": 3, "default": 3, "description": "Maximum number of items returned." },
+          "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 60000, "description": "Request budget in milliseconds. Defaults to and is capped by the service configuration." }
+        },
+        "required": ["query", "language"]
+      },
+      "SearchStatus": {
+        "type": "string",
+        "enum": ["HIT", "NO_MATCH"]
+      },
+      "SearchItem": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Stable identifier of the published Q&A." },
+          "question": { "type": "string" },
+          "answer": { "type": "string", "description": "Short, speakable answer text." },
+          "sourceRef": { "type": "string", "description": "Where the answer came from, for example a file name and heading path." },
+          "score": { "type": "number", "minimum": 0, "maximum": 1, "description": "Meilisearch ranking score for a pure-vector search, (1 + cosine) / 2, so it ranges roughly 0.5 to 1 and an unrelated document still scores about 0.5. Callers must decide on `status` (HIT or NO_MATCH, gated by the service's per-index threshold) and must not apply their own threshold to `score`." }
+        },
+        "required": ["id", "question", "answer", "sourceRef", "score"]
+      },
+      "SearchLatencyMs": {
+        "type": "object",
+        "description": "Per-stage latency of this request in milliseconds.",
+        "properties": {
+          "embedding": { "type": "number" },
+          "search": { "type": "number" },
+          "total": { "type": "number" }
+        },
+        "required": ["embedding", "search", "total"]
+      },
+      "SearchResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "$ref": "#/components/schemas/SearchStatus", "description": "HIT or NO_MATCH. NO_MATCH is decided server-side by a per-index threshold on the ranking score." },
+          "items": { "type": "array", "maxItems": 3, "items": { "$ref": "#/components/schemas/SearchItem" }, "description": "Empty when status is NO_MATCH." },
+          "latencyMs": { "$ref": "#/components/schemas/SearchLatencyMs" }
+        },
+        "required": ["status", "items", "latencyMs"]
+      },
+      "FactsLookupRequest": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "object", "description": "Key column values. Must cover exactly the key columns of the table mapping.", "additionalProperties": true },
+          "at": { "type": "string", "format": "date", "description": "Date at which the row must be valid. Omit for the current date in the service time zone (KB_TIMEZONE, default UTC)." }
+        },
+        "required": ["key"]
+      },
+      "FactsLookupStatus": {
+        "type": "string",
+        "enum": ["FOUND", "NOT_FOUND"]
+      },
+      "FactsLookupResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "$ref": "#/components/schemas/FactsLookupStatus" },
+          "row": { "type": ["object", "null"], "description": "Typed row values keyed by column name. Null when status is NOT_FOUND.", "additionalProperties": true },
+          "sourceRef": { "type": ["string", "null"] },
+          "validFrom": { "type": ["string", "null"], "format": "date" },
+          "validTo": { "type": ["string", "null"], "format": "date" }
+        },
+        "required": ["status"]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": { "error": { "$ref": "#/components/schemas/Error" } },
+        "required": ["error"]
+      },
+      "Error": {
+        "type": "object",
+        "description": "The single error envelope body: an error code plus interpolation params. Message is diagnostic English and is never shown to end users.",
+        "properties": {
+          "code": { "$ref": "#/components/schemas/ErrorCode" },
+          "message": { "type": "string" },
+          "params": { "type": "object", "description": "Machine-readable details, for example {\"field\": \"topK\"}.", "additionalProperties": true }
+        },
+        "required": ["code", "message"]
+      },
+      "ErrorCode": {
+        "type": "string",
+        "description": "Machine-readable failure identifier. The service never localizes.",
+        "enum": [
+          "UNAUTHORIZED",
+          "VALIDATION_FAILED",
+          "UNKNOWN_SCOPE_KEY",
+          "UPSTREAM_TIMEOUT",
+          "UPSTREAM_UNAVAILABLE",
+          "INDEX_UNAVAILABLE",
+          "FACT_TABLE_NOT_FOUND",
+          "FACT_TABLE_UNAVAILABLE",
+          "NOT_FOUND",
+          "METHOD_NOT_ALLOWED",
+          "STORAGE_DOWN",
+          "INTERNAL"
+        ]
+      }
+    }
+  }
+}

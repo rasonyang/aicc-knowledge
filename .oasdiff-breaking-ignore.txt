@@ -1,0 +1,5 @@
+# Breaking API changes that were reviewed and accepted.
+#
+# One line per accepted change, copied verbatim from the output of
+# `make api-breaking`, preceded by a comment with the date and the reason.
+# Empty on purpose: no change has been accepted yet.

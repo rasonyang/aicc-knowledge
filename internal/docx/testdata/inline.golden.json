@@ -1,0 +1,43 @@
+{
+  "sections": [
+    {
+      "ordinal": 1,
+      "headingPath": [
+        "Inline features"
+      ],
+      "level": 1,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "A\tB\nC\nD-E"
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "Page 7"
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "simple field result"
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "See the link text."
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "Sym ©"
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "Before box after."
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "Content control paragraph."
+        }
+      ],
+      "sourceRef": "Inline features#1"
+    }
+  ],
+  "warnings": []
+}
