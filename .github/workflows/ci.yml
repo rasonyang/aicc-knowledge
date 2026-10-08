@@ -52,7 +52,29 @@ jobs:
       KB_TEST_S3_ACCESS_KEY_ID: dev
       KB_TEST_S3_SECRET_ACCESS_KEY: dev-secret
       KB_TEST_S3_BUCKET: aicc-knowledge
+      KB_TEST_TEI_URL: http://127.0.0.1:8088
+      # Keep in step with compose.yaml. The cache key carries both, so a new
+      # TEI version or model starts from a clean download.
+      TEI_IMAGE: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.4
+      TEI_MODEL: BAAI/bge-m3
     steps:
+      # TEI (CPU) serves the real embedder, so the publish, search, embed and
+      # eval tests run instead of skipping. It is started first so the model
+      # download and load overlap the checkout, module download and build. A
+      # service container cannot take arguments, so it is started here, with
+      # the flags of compose.yaml. It uses about 6 GiB of the runner's 16 GiB.
+      # The ~2.2 GB of weights are cached (the repository cache limit is 10 GB).
+      - name: Restore the TEI model cache
+        id: tei-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/tei-data
+          key: tei-${{ env.TEI_IMAGE }}-${{ env.TEI_MODEL }}
+      - name: Start TEI
+        run: |
+          mkdir -p ~/tei-data
+          docker run -d --name tei -p 127.0.0.1:8088:80 -v "$HOME/tei-data:/data" \
+            "$TEI_IMAGE" --model-id "$TEI_MODEL" --max-batch-tokens 4096
       # SeaweedFS is the S3 the scan tests run against. A service container
       # cannot take a command, and `weed mini` is a command, so it is started
       # here, the same image and flags as compose.yaml. Without identities it
@@ -90,5 +112,32 @@ jobs:
           make sqlc-check
       - name: THIRD_PARTY_LICENSES is current
         run: make licenses-check
+      # Wait here, after the build and the checks, so they overlap the
+      # download. Poll /info, which only reports the loaded model; /health runs an
+      # inference (see internal/httpapi/ops.go). A cold start downloads the
+      # model, so the wait is generous: up to 15 minutes.
+      - name: Wait for TEI
+        run: |
+          for i in $(seq 1 180); do
+            if curl -fsS -o /dev/null "$KB_TEST_TEI_URL/info"; then
+              echo "TEI ready after $((i * 5))s"; exit 0
+            fi
+            if [ -z "$(docker ps -q -f name=^tei$)" ]; then break; fi
+            sleep 5
+          done
+          docker logs tei
+          echo "TEI did not become ready"; exit 1
+      - name: Make the TEI model cache readable
+        if: steps.tei-cache.outputs.cache-hit != 'true'
+        run: sudo chmod -R a+rX ~/tei-data
+      - name: Save the TEI model cache
+        if: steps.tei-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/tei-data
+          key: tei-${{ env.TEI_IMAGE }}-${{ env.TEI_MODEL }}
+      # Runs the whole suite with -race and fails on any skipped test that is
+      # not in .ci-allowed-skips.txt. Only the tests that need a live LLM are
+      # allowed to skip.
       - name: Test
-        run: go test -race -count=1 ./...
+        run: scripts/test-gate.sh

@@ -1,0 +1,11 @@
+# Tests the CI job is allowed to skip, one `package.TestName` per line (package
+# is the last import-path element; an entry also covers the test's subtests).
+# scripts/test-gate.sh fails the job on any other skip.
+#
+# Do not add a test here because a service is missing: provide the service in
+# .github/workflows/ci.yml instead.
+
+# Needs a real LLM (KB_TEST_LLM_URL / KB_TEST_LLM_MODEL). CI has none: a local
+# model is a ~2.5 GB download plus a llama.cpp build, too heavy for every run.
+# The generation pipeline is covered in CI by the llmtest fake.
+generate.TestRealLLM

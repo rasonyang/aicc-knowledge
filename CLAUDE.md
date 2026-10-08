@@ -63,5 +63,6 @@ Defined in `internal/domain`, with a table-driven test for every allowed and eve
 - Real PostgreSQL and real Meilisearch in tests. No mocks for either. `internal/testdb.ScratchDSN` makes a throwaway database per test from `KB_TEST_DATABASE_URL`; `testdb.MeiliURL` reads `KB_TEST_MEILI_URL`. A test that needs them skips loudly when they are unset, and `make test` prints a warning box. TEI may be faked with httptest only in unit tests of readiness wiring; prefer the real one.
 - `TASKS.md` is the plan. The cursor is the first unchecked item. Check an item only after it is verified against live services.
 - Done means verified against live services: `make dev-up`, set the `KB_TEST_*` variables, `make test` with zero skips, then exercise the running stack with curl.
+- CI runs `scripts/test-gate.sh` (`make test-gate`): `-race`, real PostgreSQL, Meilisearch, SeaweedFS and TEI, and it fails on any skipped test not listed in `.ci-allowed-skips.txt`. Only the live-LLM tests (`KB_TEST_LLM_URL`) may be listed; never allowlist a test because a service is missing, add the service to `ci.yml`.
 - Run Go tests with `-race`. Run `make generate api-check build lint sqlc-check` before saying a change is done.
 - Do not add attribution lines to commits, PRs, issues or release notes.

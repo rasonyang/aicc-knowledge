@@ -94,6 +94,10 @@ test: ## go test -race ./... (needs KB_TEST_DATABASE_URL, KB_TEST_MEILI_URL, KB_
 		echo '################################################################'; \
 	fi
 
+.PHONY: test-gate
+test-gate: ## What CI runs: go test -race, failing on any skip not in .ci-allowed-skips.txt (needs jq and KB_TEST_TEI_URL as well)
+	scripts/test-gate.sh
+
 .PHONY: lint
 lint: ## Vet Go code and check formatting
 	go vet ./...

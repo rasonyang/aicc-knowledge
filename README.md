@@ -75,6 +75,7 @@ export KB_TEST_S3_ENDPOINT=http://127.0.0.1:18333 KB_TEST_S3_BUCKET=aicc-knowled
 export KB_TEST_S3_ACCESS_KEY_ID=dev KB_TEST_S3_SECRET_ACCESS_KEY=dev-secret   # the dev SeaweedFS has no identities and accepts any key
 make build       # bin/aicc-knowledge
 make test        # go test -race ./...
+make test-gate   # what CI runs: also fails on any skipped test outside .ci-allowed-skips.txt (needs jq, KB_TEST_TEI_URL)
 make lint        # go vet and gofmt
 make generate    # sqlc
 make api-check   # contract lint and generated code is current
