@@ -20,6 +20,7 @@ import (
 	"github.com/rasonyang/aicc-knowledge/internal/domain"
 	"github.com/rasonyang/aicc-knowledge/internal/embed"
 	"github.com/rasonyang/aicc-knowledge/internal/meili"
+	"github.com/rasonyang/aicc-knowledge/internal/products"
 	"github.com/rasonyang/aicc-knowledge/internal/publish"
 	"github.com/rasonyang/aicc-knowledge/internal/search"
 	"github.com/rasonyang/aicc-knowledge/internal/store"
@@ -374,4 +375,83 @@ func (e *Env) SearchIDs(lang domain.Language, query string, scope map[string]str
 		out = append(out, it.ID)
 	}
 	return out
+}
+
+// CatalogKey is the object key of the catalog the Env's publisher expects.
+const CatalogKey = "kb/products.yaml"
+
+// SetCatalog makes yaml the parsed catalog of a new current version of
+// CatalogKey, as scan and parse would, and returns the catalog row id. It
+// fails the test when yaml does not validate.
+func (e *Env) SetCatalog(yaml string) uuid.UUID {
+	e.T.Helper()
+	cat, err := products.Parse([]byte(yaml))
+	if err != nil {
+		e.T.Fatal(err)
+	}
+	raw, err := cat.MarshalJSON()
+	if err != nil {
+		e.T.Fatal(err)
+	}
+	e.NewVersion(CatalogKey)
+	v := e.EnsureVersion(CatalogKey)
+	var id uuid.UUID
+	if err := e.Store.Pool.QueryRow(context.Background(),
+		`INSERT INTO product_catalogs (file_version_id, products) VALUES ($1, $2) RETURNING id`, v, raw).Scan(&id); err != nil {
+		e.T.Fatal(err)
+	}
+	return id
+}
+
+// BreakCatalog makes the current catalog version PARSE_FAILED (CATALOG_INVALID),
+// as a bad edit of the file would.
+func (e *Env) BreakCatalog() {
+	e.T.Helper()
+	e.NewVersion(CatalogKey)
+	e.exec(`UPDATE file_versions SET state = 'PARSE_FAILED', parse_error_code = 'CATALOG_INVALID' WHERE id = $1`, e.EnsureVersion(CatalogKey))
+}
+
+// UseCatalogs gives the Env's Searcher a catalog cache over the Env's store
+// and loads it. Call Refresh on the returned cache after a publish or rollback.
+func (e *Env) UseCatalogs() *search.CatalogCache {
+	e.T.Helper()
+	c := &search.CatalogCache{Queries: e.Store.Queries}
+	if err := c.Refresh(context.Background()); err != nil {
+		e.T.Fatal(err)
+	}
+	e.Searcher.Catalogs = c
+	return c
+}
+
+// ItemProducts returns the products snapshotted per candidate of a publication.
+func (e *Env) ItemProducts(pub uuid.UUID) map[string][]string {
+	e.T.Helper()
+	rows, err := e.Store.Pool.Query(context.Background(), `SELECT candidate_id::text, products FROM publication_items WHERE publication_id = $1`, pub)
+	if err != nil {
+		e.T.Fatal(err)
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var id string
+		var ps []string
+		if err := rows.Scan(&id, &ps); err != nil {
+			e.T.Fatal(err)
+		}
+		out[id] = ps
+	}
+	return out
+}
+
+// PubCatalog returns the catalog id recorded on a publication (uuid.Nil: none).
+func (e *Env) PubCatalog(pub uuid.UUID) uuid.UUID {
+	e.T.Helper()
+	var id *uuid.UUID
+	if err := e.Store.Pool.QueryRow(context.Background(), `SELECT catalog_id FROM publications WHERE id = $1`, pub).Scan(&id); err != nil {
+		e.T.Fatal(err)
+	}
+	if id == nil {
+		return uuid.Nil
+	}
+	return *id
 }

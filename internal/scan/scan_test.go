@@ -605,10 +605,31 @@ func TestClassify(t *testing.T) {
 		"x.yaml": scan.FormatUnsupported, "x.facts.yml": scan.FormatUnsupported,
 		"a.doc": scan.FormatUnsupported, "a.xls": scan.FormatUnsupported, "a.pdf": scan.FormatUnsupported,
 		"docx": scan.FormatUnsupported, "a.docx.bak": scan.FormatUnsupported,
+		"products.yaml": scan.FormatCatalog, "kb/Products.YAML": scan.FormatCatalog, "kb/sub/products.yaml": scan.FormatCatalog,
+		"my-products.yaml": scan.FormatUnsupported, "products.yml": scan.FormatUnsupported, "products.facts.yaml": scan.FormatFacts,
 	}
 	for k, want := range cases {
 		if got := scan.Classify(k); got != want {
 			t.Errorf("Classify(%q) = %v, want %v", k, got, want)
+		}
+	}
+}
+
+func TestIsCatalogRoot(t *testing.T) {
+	for _, tc := range []struct {
+		prefix, key string
+		want        bool
+	}{
+		{"kb/", "kb/products.yaml", true},
+		{"kb/", "kb/Products.YAML", true},
+		{"kb", "kb/products.yaml", true},
+		{"", "products.yaml", true},
+		{"kb/", "kb/sub/products.yaml", false},
+		{"kb/", "other/products.yaml", false},
+		{"kb/", "kb/my-products.yaml", false},
+	} {
+		if got := scan.IsCatalogRoot(tc.prefix, tc.key); got != tc.want {
+			t.Errorf("IsCatalogRoot(%q, %q) = %v, want %v", tc.prefix, tc.key, got, tc.want)
 		}
 	}
 }

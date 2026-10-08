@@ -10,6 +10,15 @@
 // publish and rollback code is the only writer, and it swaps a fully built,
 // verified index in. The searcher therefore does not ask PostgreSQL whether a
 // publication is LIVE; a missing index is INDEX_UNAVAILABLE.
+//
+// Product guard. When a product catalog is loaded for the language (Catalogs),
+// the hits of the over-fetch set are filtered by product before the threshold
+// and topK (guard.go): a hit about another product than the query names is
+// dropped, a query naming a model the catalog does not know is NO_MATCH, and
+// a generic hit needs the threshold plus a margin. It runs in the searcher, on
+// the hits' own product ids, because the over-fetch set is already in memory
+// and the rules are not expressible as a Meilisearch filter (a catalog-wide
+// compatibility expansion and a per-hit score margin).
 package search
 
 import (
@@ -24,6 +33,7 @@ import (
 	"github.com/rasonyang/aicc-knowledge/internal/embed"
 	"github.com/rasonyang/aicc-knowledge/internal/meili"
 	"github.com/rasonyang/aicc-knowledge/internal/obs"
+	"github.com/rasonyang/aicc-knowledge/internal/products"
 )
 
 // Code is a coded error. The values are members of the contract's ErrorCode enum.
@@ -91,6 +101,13 @@ type Searcher struct {
 	ScopeKeys []string
 	// ThresholdEN and ThresholdZH are the NO_MATCH score thresholds, in (0.5, 1].
 	ThresholdEN, ThresholdZH float64
+	// GenericMarginEN and GenericMarginZH are added to the threshold for a hit
+	// that is about no particular product. They apply only when a catalog is
+	// loaded for the language.
+	GenericMarginEN, GenericMarginZH float64
+	// Catalogs gives the product catalog of a language; nil turns the product
+	// guard off everywhere.
+	Catalogs Catalogs
 	// IndexPrefix is "faq_" unless a test needs a private namespace.
 	IndexPrefix string
 	// Metrics may be nil (eval).
@@ -108,6 +125,11 @@ type Request struct {
 	// Threshold overrides the language's threshold when non-nil. 0 disables the
 	// gate. Eval uses it to sweep thresholds; the HTTP handler never sets it.
 	Threshold *float64
+	// GenericMargin overrides the language's generic margin when non-nil. Eval
+	// uses it to sweep margins.
+	GenericMargin *float64
+	// KeepDropped fills Response.Dropped (eval).
+	KeepDropped bool
 }
 
 // Item is one result.
@@ -117,6 +139,8 @@ type Item struct {
 	Answer    string
 	SourceRef string
 	Score     float64
+	// Products are the catalog products the FAQ is about; empty is generic.
+	Products []string
 }
 
 // Latency is the per-stage wall-clock time of one search, measured with the
@@ -130,6 +154,29 @@ type Response struct {
 	Status  Status
 	Items   []Item
 	Latency Latency
+	// Guard counts what the product guard changed; zero without a catalog.
+	Guard Guard
+	// Dropped lists the hits removed by the product guard (R1 and R2) when
+	// the request asked for it; the threshold and margin are not recorded.
+	Dropped []Drop
+	// Catalog is true when a product catalog applied to this search.
+	Catalog bool
+}
+
+// GenericMarginFor returns the configured generic margin of a language.
+func (s *Searcher) GenericMarginFor(lang domain.Language) float64 {
+	if lang == domain.LanguageZH {
+		return s.GenericMarginZH
+	}
+	return s.GenericMarginEN
+}
+
+// CatalogFor returns the catalog that applies to a language, or nil.
+func (s *Searcher) CatalogFor(lang domain.Language) *products.Catalog {
+	if s.Catalogs == nil {
+		return nil
+	}
+	return s.Catalogs.Catalog(lang)
 }
 
 // ThresholdFor returns the configured threshold of a language.
@@ -164,6 +211,15 @@ func (s *Searcher) Search(ctx context.Context, req Request) (Response, error) {
 		}
 		s.Metrics.ObserveSearch(ctx, string(req.Language), status, obs.SearchStages{
 			Embedding: resp.Latency.Embedding, Search: resp.Latency.Search, Total: resp.Latency.Total})
+		lang := string(req.Language)
+		for outcome, n := range map[string]int{
+			GuardDroppedDisjoint: resp.Guard.DroppedDisjoint, GuardUnknownModel: resp.Guard.UnknownModel,
+			GuardGenericBelowMargin: resp.Guard.GenericBelowMargin,
+		} {
+			if n > 0 {
+				s.Metrics.ObserveProductGuard(ctx, lang, outcome, int64(n))
+			}
+		}
 	}
 	return resp, err
 }
@@ -210,11 +266,16 @@ func (s *Searcher) search(ctx context.Context, req Request, start time.Time) (Re
 	// path.
 	hits := slices.Clone(res.Hits)
 	slices.SortStableFunc(hits, func(a, b meili.Hit) int { return cmp.Compare(b.Score, a.Score) })
-	hits = slices.DeleteFunc(hits, func(h meili.Hit) bool { return h.Score < threshold })
+	margin := s.GenericMarginFor(req.Language)
+	if req.GenericMargin != nil {
+		margin = *req.GenericMargin
+	}
+	resp.Catalog = s.CatalogFor(req.Language) != nil
+	hits, resp.Guard, resp.Dropped = applyGuard(s.CatalogFor(req.Language), req.Query, hits, threshold, margin, req.KeepDropped)
 	hits = hits[:min(len(hits), topK)]
 	resp.Items = make([]Item, 0, len(hits))
 	for _, h := range hits {
-		resp.Items = append(resp.Items, Item{ID: h.ID, Question: h.Question, Answer: h.Answer, SourceRef: h.SourceRef, Score: h.Score})
+		resp.Items = append(resp.Items, Item{ID: h.ID, Question: h.Question, Answer: h.Answer, SourceRef: h.SourceRef, Score: h.Score, Products: h.Products})
 	}
 	resp.Status = StatusNoMatch
 	if len(resp.Items) > 0 {

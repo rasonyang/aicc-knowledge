@@ -86,6 +86,22 @@ decision itself.
   differ. Treat 0.85/0.85 as a starting point and re-calibrate on real
   questions before relying on NO_MATCH.** The sweep is `aicc-knowledge eval
   --in questions.csv --sweep`.
+
+  Second calibration (2026-10-09): the ZH default is now 0.875, together with
+  the product guard (`internal/search`, `internal/products`). It was
+  calibrated offline on a private real sample of 170 Chinese questions; no
+  data from it is in this repository, and the sample is not reproducible from
+  here. On it, most wrong HITs were product-model confusion (a question about
+  one model matched the FAQ of another) and generic FAQs matching off-topic
+  questions. At 0.875, vector-only NO_MATCH recall was 0.726; with the guard
+  (drop hits about other products, NO_MATCH for an unknown model, a 0.04
+  margin for generic hits) it was 0.832, with recall@3 unchanged at 0.880 and
+  NO_MATCH precision about 0.99. Twenty repetitions of a 2-fold held-out split
+  gave +0.07 NO_MATCH recall. A cross-encoder reranker was tried as the
+  alternative: it was worse and took 0.2 to 4 s on CPU, so there is none. EN
+  stays at 0.85 with a margin of 0 because there is no real EN data yet. These
+  numbers are a statement about that sample; re-calibrate on yours with `eval
+  --sweep`, which sweeps the margin when a catalog is live.
 - **C5: Scope keys are validated in the service** against the configured
   filterable keys, before Meilisearch is called.
 - **C6: Swap tasks are asynchronous.** A swap returns 202 even when an index

@@ -17,6 +17,12 @@
 //     uid now holds their content (publications.content_uid). If that
 //     transaction fails, the swap is undone.
 //   - One publish or rollback per language at a time (PostgreSQL advisory lock).
+//   - Product tags. When the root products.yaml has a parsed catalog, the
+//     publication records its catalog id, and every item records the products
+//     its question names (else those its source file name names, else none:
+//     generic). The tags are copied into the index documents and rebuilt from
+//     publication_items on rollback. A catalog file that exists but did not
+//     parse refuses the publish (CATALOG_UNAVAILABLE).
 //
 // A crash between the swap and the commit leaves a BUILDING row and a live
 // index that is ahead of the database. The next publish marks the row FAILED
@@ -40,6 +46,8 @@ import (
 	"github.com/rasonyang/aicc-knowledge/internal/domain"
 	"github.com/rasonyang/aicc-knowledge/internal/meili"
 	"github.com/rasonyang/aicc-knowledge/internal/obs"
+	"github.com/rasonyang/aicc-knowledge/internal/products"
+	"github.com/rasonyang/aicc-knowledge/internal/scan"
 	"github.com/rasonyang/aicc-knowledge/internal/store"
 	"github.com/rasonyang/aicc-knowledge/internal/store/queries"
 )
@@ -62,6 +70,7 @@ const (
 	CodeRollbackTargetBad  Code  = "ROLLBACK_TARGET_INVALID"
 	CodeDatabase           Code  = "DATABASE_ERROR"
 	CodeHookFailed         Code  = "HOOK_FAILED"
+	CodeCatalogUnavailable Code  = "CATALOG_UNAVAILABLE"
 	defaultEmbedChunk            = 8
 	indexAddBatch                = 200
 	staleCleanupTimeout          = 30 * time.Second
@@ -358,6 +367,10 @@ func (p *Publisher) snapshot(ctx context.Context, lang domain.Language, opts Pub
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return pub, nil, nil, false, fail(CodeDatabase, "read the live publication", err)
 	}
+	cat, catalogID, err := p.currentCatalog(ctx, q)
+	if err != nil {
+		return pub, nil, nil, false, err
+	}
 	if len(cands) == 0 && !opts.AllowEmpty {
 		if prev != nil && prev.ItemCount > 0 {
 			return pub, nil, prev, false, fail(CodeEmptyRefused, fmt.Sprintf(
@@ -371,7 +384,7 @@ func (p *Publisher) snapshot(ctx context.Context, lang domain.Language, opts Pub
 		return pub, nil, nil, false, fail(CodeDatabase, "generate a publication id", err)
 	}
 	staging := p.stagingUID(lang, id, "")
-	if err := q.InsertPublication(ctx, queries.InsertPublicationParams{ID: id, Language: string(lang), IndexUid: staging}); err != nil {
+	if err := q.InsertPublication(ctx, queries.InsertPublicationParams{ID: id, Language: string(lang), IndexUid: staging, CatalogID: catalogID}); err != nil {
 		return pub, nil, nil, false, fail(CodeDatabase, "insert the publication", err)
 	}
 	items = make([]queries.PublicationItem, 0, len(cands))
@@ -380,11 +393,15 @@ func (p *Publisher) snapshot(ctx context.Context, lang domain.Language, opts Pub
 		if err != nil {
 			return pub, nil, nil, false, fail(CodeDatabase, "encode a scope", err)
 		}
+		prods := []string{}
+		if cat != nil {
+			prods = append(prods, cat.DocumentProducts(c.Question, c.AlternateQuestions, c.ObjectKey)...)
+		}
 		it := queries.PublicationItem{PublicationID: id, CandidateID: c.ID, ContentHash: c.ContentHash, Question: c.Question,
-			AlternateQuestions: c.AlternateQuestions, Answer: c.Answer, SourceRef: c.SourceRef, Scope: scopeJSON}
+			AlternateQuestions: c.AlternateQuestions, Answer: c.Answer, SourceRef: c.SourceRef, Scope: scopeJSON, Products: prods}
 		if err := q.InsertPublicationItem(ctx, queries.InsertPublicationItemParams{PublicationID: id, CandidateID: c.ID,
 			ContentHash: c.ContentHash, Question: c.Question, AlternateQuestions: c.AlternateQuestions, Answer: c.Answer,
-			SourceRef: c.SourceRef, Scope: scopeJSON}); err != nil {
+			SourceRef: c.SourceRef, Scope: scopeJSON, Products: prods}); err != nil {
 			return pub, nil, nil, false, fail(CodeDatabase, "insert a publication item", err)
 		}
 		items = append(items, it)
@@ -399,6 +416,38 @@ func (p *Publisher) snapshot(ctx context.Context, lang domain.Language, opts Pub
 		return pub, nil, nil, false, fail(CodeDatabase, "commit the snapshot", err)
 	}
 	return pub, items, prev, false, nil
+}
+
+// currentCatalog returns the catalog a publication built now is tagged with:
+// the stored catalog of the current version of the root products.yaml. No such
+// object means no catalog (nil, nil: the search guard is off). An object whose
+// current version is not PARSED (still DISCOVERED, PARSE_FAILED, too large) is
+// CATALOG_UNAVAILABLE: publishing then would silently publish without product
+// tags, so the operator must fix the file or remove it first.
+func (p *Publisher) currentCatalog(ctx context.Context, q *queries.Queries) (*products.Catalog, *uuid.UUID, error) {
+	rows, err := q.ListCurrentCatalogSources(ctx)
+	if err != nil {
+		return nil, nil, fail(CodeDatabase, "read the product catalog", err)
+	}
+	for _, r := range rows {
+		if !scan.IsCatalogRoot(p.S3Prefix, r.ObjectKey) {
+			continue
+		}
+		if r.CatalogID == nil || r.State != string(domain.FileVersionParsed) {
+			code := ""
+			if r.ParseErrorCode != nil {
+				code = *r.ParseErrorCode
+			}
+			return nil, nil, fail(CodeCatalogUnavailable, fmt.Sprintf(
+				"%s is %s %s; fix it (and parse), or remove it, before publishing", r.ObjectKey, r.State, code), nil)
+		}
+		cat, err := products.FromJSON(r.Products)
+		if err != nil {
+			return nil, nil, fail(CodeCatalogUnavailable, "the stored catalog of "+r.ObjectKey+" does not validate", err)
+		}
+		return cat, r.CatalogID, nil
+	}
+	return nil, nil, nil
 }
 
 // phrasings returns the distinct, non-empty question texts of an item: the
@@ -445,7 +494,7 @@ func (p *Publisher) build(ctx context.Context, uid string, pubID uuid.UUID, item
 			alts = []string{}
 		}
 		d := meili.Document{ID: it.CandidateID.String(), Question: it.Question, AlternateQuestions: alts,
-			Answer: it.Answer, SourceRef: it.SourceRef, Scope: scope, PublicationID: pubID.String()}
+			Answer: it.Answer, SourceRef: it.SourceRef, Scope: scope, PublicationID: pubID.String(), Products: prodsOrEmpty(it.Products)}
 		d.SetVectors(vecs[spans[i][0]:spans[i][1]])
 		docs[i] = d
 	}
@@ -476,6 +525,13 @@ func (p *Publisher) build(ctx context.Context, uid string, pubID uuid.UUID, item
 		return fail(CodeIndexBuildFailed, "index task failed", err)
 	}
 	return p.verify(ctx, uid, items)
+}
+
+func prodsOrEmpty(ids []string) []string {
+	if ids == nil {
+		return []string{}
+	}
+	return ids
 }
 
 func (p *Publisher) verify(ctx context.Context, uid string, items []queries.PublicationItem) error {

@@ -122,6 +122,13 @@ type ParsedSection struct {
 	QaLanguage    *string   `json:"qaLanguage"`
 }
 
+type ProductCatalog struct {
+	ID            uuid.UUID          `json:"id"`
+	FileVersionID uuid.UUID          `json:"fileVersionId"`
+	Products      []byte             `json:"products"`
+	CreatedAt     pgtype.Timestamptz `json:"createdAt"`
+}
+
 type Publication struct {
 	ID           uuid.UUID          `json:"id"`
 	Language     string             `json:"language"`
@@ -133,6 +140,7 @@ type Publication struct {
 	LiveAt       pgtype.Timestamptz `json:"liveAt"`
 	SupersededAt pgtype.Timestamptz `json:"supersededAt"`
 	ContentUid   *string            `json:"contentUid"`
+	CatalogID    *uuid.UUID         `json:"catalogId"`
 }
 
 type PublicationItem struct {
@@ -144,6 +152,7 @@ type PublicationItem struct {
 	Answer             string    `json:"answer"`
 	SourceRef          string    `json:"sourceRef"`
 	Scope              []byte    `json:"scope"`
+	Products           []string  `json:"products"`
 }
 
 type SourceFile struct {

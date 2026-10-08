@@ -13,7 +13,7 @@
 //     metadata is recorded so the next scan does not download again;
 //   - different hash: the current version is superseded, its candidates become
 //     STALE, and a new version (version_no+1) is inserted, DISCOVERED with a
-//     PARSE job for .docx, .xlsx, *.facts.yaml and *.qa.yaml, or UNSUPPORTED with
+//     PARSE job for .docx, .xlsx, *.facts.yaml, *.qa.yaml and products.yaml, or UNSUPPORTED with
 //     parse_error_code UNSUPPORTED_FORMAT for everything else, or UNSUPPORTED
 //     with OBJECT_TOO_LARGE (no job) when the object is larger than the
 //     configured cap;
@@ -61,6 +61,7 @@ import (
 	"github.com/rasonyang/aicc-knowledge/internal/domain"
 	"github.com/rasonyang/aicc-knowledge/internal/jobs"
 	"github.com/rasonyang/aicc-knowledge/internal/obs"
+	"github.com/rasonyang/aicc-knowledge/internal/products"
 	"github.com/rasonyang/aicc-knowledge/internal/s3store"
 	"github.com/rasonyang/aicc-knowledge/internal/store"
 	"github.com/rasonyang/aicc-knowledge/internal/store/queries"
@@ -106,13 +107,27 @@ const (
 	FormatFacts
 	// FormatQA is a Q&A mapping, `<name>.qa.yaml` next to `<name>.xlsx`.
 	FormatQA
+	// FormatCatalog is a product catalog, a file named `products.yaml`. Only
+	// the one at the root of the S3 prefix is the catalog (see IsCatalogRoot).
+	FormatCatalog
 )
+
+// IsCatalogRoot reports whether key is the catalog object: `products.yaml`
+// (any case) directly under prefix.
+func IsCatalogRoot(prefix, key string) bool {
+	if !strings.HasPrefix(key, prefix) {
+		return false
+	}
+	return strings.EqualFold(strings.TrimLeft(strings.TrimPrefix(key, prefix), "/"), products.CatalogFileName)
+}
 
 // Classify maps an object key to its format by extension, case-insensitively.
 // ".doc", ".xls", ".pdf" and everything else are unsupported.
 func Classify(key string) Format {
 	lower := strings.ToLower(key)
 	switch {
+	case path.Base(lower) == products.CatalogFileName:
+		return FormatCatalog
 	case strings.HasSuffix(lower, ".facts.yaml"):
 		return FormatFacts
 	case strings.HasSuffix(lower, ".qa.yaml"):

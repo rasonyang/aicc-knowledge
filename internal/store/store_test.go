@@ -58,7 +58,7 @@ func TestMigrateUpDownUp(t *testing.T) {
 	}
 	defer s.Close()
 
-	want := []string{"api_keys", "candidate_reviews", "candidates", "fact_rows", "fact_tables", "file_versions", "jobs", "parsed_sections", "publication_items", "publications", "source_files"}
+	want := []string{"api_keys", "candidate_reviews", "candidates", "fact_rows", "fact_tables", "file_versions", "jobs", "parsed_sections", "product_catalogs", "publication_items", "publications", "source_files"}
 
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatal("up from zero:", err)
@@ -67,8 +67,8 @@ func TestMigrateUpDownUp(t *testing.T) {
 		t.Fatalf("tables after up = %v, want %v", got, want)
 	}
 	applied, latest, err := s.MigrationVersions(ctx)
-	if err != nil || applied != latest || latest != 13 {
-		t.Fatalf("versions applied=%d latest=%d err=%v, want 13/13", applied, latest, err)
+	if err != nil || applied != latest || latest != 14 {
+		t.Fatalf("versions applied=%d latest=%d err=%v, want 14/14", applied, latest, err)
 	}
 
 	if err := s.MigrateDown(ctx); err != nil {
@@ -112,8 +112,8 @@ func TestMigrateIsSerializedByAdvisoryLock(t *testing.T) {
 			t.Fatal("concurrent migrate:", err)
 		}
 	}
-	if got := len(tableNames(t, a)); got != 11 {
-		t.Fatalf("tables = %d, want 11", got)
+	if got := len(tableNames(t, a)); got != 12 {
+		t.Fatalf("tables = %d, want 12", got)
 	}
 }
 
@@ -351,10 +351,10 @@ func TestSchemaNamingConventions(t *testing.T) {
 			t.Errorf("constraint %q should start with %s", name, prefix)
 		}
 	}
-	// 7 unique + 12 foreign keys; the exact count guards against a constraint
+	// 8 unique + 14 foreign keys; the exact count guards against a constraint
 	// that escaped the naming rule.
-	if seen != 19 {
-		t.Fatalf("unique and foreign-key constraints = %d, want 19", seen)
+	if seen != 22 {
+		t.Fatalf("unique and foreign-key constraints = %d, want 22", seen)
 	}
 }
 
@@ -443,5 +443,39 @@ func TestParsedSectionsHoldQARows(t *testing.T) {
 	var alts []string
 	if err := s.Pool.QueryRow(ctx, `SELECT qa_alternates FROM parsed_sections WHERE ordinal = 1`).Scan(&alts); err != nil || len(alts) != 2 {
 		t.Errorf("alternates = %v, %v", alts, err)
+	}
+}
+
+// TestProductCatalogsSnapshotIntoPublications pins migration 00014: a catalog
+// is one immutable row per file version, a publication may point at one (or at
+// none), and items carry a product set that defaults to empty (generic).
+func TestProductCatalogsSnapshotIntoPublications(t *testing.T) {
+	ctx := context.Background()
+	s := openMigrated(t)
+	var sf, fv, cat string
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(s.Pool.QueryRow(ctx, `INSERT INTO source_files (bucket, object_key) VALUES ('b', 'products.yaml') RETURNING id::text`).Scan(&sf))
+	must(s.Pool.QueryRow(ctx, `INSERT INTO file_versions (source_file_id, version_no, sha256, size_bytes, etag, last_modified_at, state)
+		VALUES ($1, 1, sha256('x'), 1, 'e', now(), 'PARSED') RETURNING id::text`, sf).Scan(&fv))
+	must(s.Pool.QueryRow(ctx, `INSERT INTO product_catalogs (file_version_id, products) VALUES ($1, '{"products":[]}') RETURNING id::text`, fv).Scan(&cat))
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO product_catalogs (file_version_id, products) VALUES ($1, '{}')`, fv); err == nil {
+		t.Error("a second catalog row for one file version was accepted")
+	}
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO product_catalogs (file_version_id, products) VALUES ($1, '[]')`, fv); err == nil {
+		t.Error("a catalog that is not a JSON object was accepted")
+	}
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO publications (language, index_uid, catalog_id) VALUES ('EN', 'u1', $1)`, cat); err != nil {
+		t.Errorf("publication with a catalog: %v", err)
+	}
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO publications (language, index_uid) VALUES ('EN', 'u2')`); err != nil {
+		t.Errorf("publication without a catalog: %v", err)
+	}
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO publications (language, index_uid, catalog_id) VALUES ('EN', 'u3', gen_random_uuid())`); err == nil {
+		t.Error("a publication pointing at a missing catalog was accepted")
 	}
 }

@@ -13,7 +13,9 @@
 //     never parsed under a version they do not belong to. The next scan makes
 //     the new version;
 //   - .docx goes to internal/docx, .xlsx to internal/xlsx, and `*.facts.yaml`
-//     is validated as a facts mapping;
+//     is validated as a facts mapping; `products.yaml` at the root of the S3
+//     prefix is validated as the product catalog and stored (no sections, no
+//     GENERATE job), and one anywhere else fails CATALOG_MISPLACED;
 //   - everything one version needs (sections, state, warnings, fact import,
 //     job completion) is written in one transaction.
 //
@@ -75,6 +77,9 @@ const (
 	// Q&A mapping.
 	CodeQASheetConflict = "QA_SHEET_CONFLICT"
 	CodeObjectTooLarge  = scan.ParseErrorObjectTooLarge
+	// CodeCatalogMisplaced: a products.yaml that is not at the root of the S3
+	// prefix. There is exactly one catalog; this one is ignored and says so.
+	CodeCatalogMisplaced = "CATALOG_MISPLACED"
 	// CodeQALanguageUnknown is a row-level warning, not a failure.
 	CodeQALanguageUnknown = "QA_LANGUAGE_UNKNOWN"
 )
@@ -93,6 +98,7 @@ const (
 	KindXlsx    = "XLSX"
 	KindMapping = "FACTS_MAPPING"
 	KindQA      = "QA_MAPPING"
+	KindCatalog = "PRODUCT_CATALOG"
 
 	OutcomeParsed  = "PARSED"
 	OutcomeFailed  = "PARSE_FAILED"
@@ -273,6 +279,8 @@ func kindOf(f scan.Format) string {
 		return KindMapping
 	case scan.FormatQA:
 		return KindQA
+	case scan.FormatCatalog:
+		return KindCatalog
 	}
 	return "UNKNOWN"
 }
@@ -331,6 +339,8 @@ func (w *Worker) attempt(ctx context.Context, queue *jobs.Queue, job jobs.Job, i
 		return w.parseWorkbook(ctx, job, t, data)
 	case scan.FormatQA:
 		return w.parseQAMapping(ctx, job, t, data)
+	case scan.FormatCatalog:
+		return w.parseCatalog(ctx, job, t, data)
 	default:
 		return w.parseMapping(ctx, job, t, data)
 	}

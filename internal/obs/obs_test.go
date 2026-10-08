@@ -20,6 +20,7 @@ func TestMetricsAreExposedUnderTheDeclaredNames(t *testing.T) {
 	defer p.Shutdown(ctx)
 	p.Metrics.ObserveSearch(ctx, "EN", "NO_MATCH", SearchStages{Embedding: 30 * time.Millisecond, Search: 5 * time.Millisecond, Total: 40 * time.Millisecond})
 	p.Metrics.ObserveHTTP(ctx, "POST", "/v1/search", 200, 41*time.Millisecond)
+	p.Metrics.ObserveProductGuard(ctx, "ZH", "dropped_disjoint", 2)
 
 	rec := httptest.NewRecorder()
 	p.MetricsHandler.ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
@@ -32,6 +33,7 @@ func TestMetricsAreExposedUnderTheDeclaredNames(t *testing.T) {
 		MetricSearchTotalSeconds + `_count{language="EN",status="NO_MATCH"`,
 		MetricHTTPRequestsTotal + "{",
 		MetricHTTPRequestSeconds + "_bucket{",
+		MetricProductGuardTotal + `{language="ZH",outcome="dropped_disjoint"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("/metrics lacks %q", want)

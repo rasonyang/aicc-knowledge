@@ -8,11 +8,11 @@ WHERE language = $1 AND state = 'LIVE';
 SELECT * FROM publications WHERE id = $1;
 
 -- name: InsertPublication :exec
-INSERT INTO publications (id, language, index_uid) VALUES ($1, $2, $3);
+INSERT INTO publications (id, language, index_uid, catalog_id) VALUES ($1, $2, $3, $4);
 
 -- name: InsertPublicationItem :exec
-INSERT INTO publication_items (publication_id, candidate_id, content_hash, question, alternate_questions, answer, source_ref, scope)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+INSERT INTO publication_items (publication_id, candidate_id, content_hash, question, alternate_questions, answer, source_ref, scope, products)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
 
 -- name: SetPublicationItemCount :exec
 UPDATE publications SET item_count = $2 WHERE id = $1;

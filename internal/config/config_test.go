@@ -307,7 +307,7 @@ func TestPublishSettingsDefaultsOverridesAndRequirements(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.SearchThresholdEN != 0.85 || c.SearchThresholdZH != 0.85 || c.MeiliIndexPrefix != "faq_" || c.EmbeddingDimensions != 1024 || c.PublishRetainIndexes != 3 || c.S3ScopePathTemplate != "" || c.TEIBatchURL != "" || c.ScopePathKeys() != nil {
+	if c.SearchThresholdEN != 0.85 || c.SearchThresholdZH != 0.875 || c.SearchGenericMarginEN != 0 || c.SearchGenericMarginZH != 0.04 || c.ProductsRefreshSec != 30 || c.MeiliIndexPrefix != "faq_" || c.EmbeddingDimensions != 1024 || c.PublishRetainIndexes != 3 || c.S3ScopePathTemplate != "" || c.TEIBatchURL != "" || c.ScopePathKeys() != nil {
 		t.Errorf("defaults = %+v", c)
 	}
 	err = c.RequirePublish()
@@ -370,6 +370,29 @@ func TestScopePathTemplateIsValidatedAtStartup(t *testing.T) {
 		t.Setenv(k, v)
 		if _, err := Load(); err == nil || !strings.Contains(err.Error(), k) {
 			t.Errorf("%s=%s accepted: %v", k, v, err)
+		}
+	}
+}
+
+func TestProductGuardSettings(t *testing.T) {
+	clearKB(t)
+	t.Setenv("KB_SEARCH_GENERIC_MARGIN_ZH", "0.06")
+	t.Setenv("KB_SEARCH_GENERIC_MARGIN_EN", "0.02")
+	t.Setenv("KB_PRODUCTS_REFRESH_SEC", "5")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SearchGenericMarginZH != 0.06 || c.SearchGenericMarginEN != 0.02 || c.ProductsRefreshSec != 5 {
+		t.Errorf("settings = %v %v %v", c.SearchGenericMarginZH, c.SearchGenericMarginEN, c.ProductsRefreshSec)
+	}
+	for key, bad := range map[string]string{
+		"KB_SEARCH_GENERIC_MARGIN_ZH": "-0.01", "KB_SEARCH_GENERIC_MARGIN_EN": "0.5", "KB_PRODUCTS_REFRESH_SEC": "0",
+	} {
+		clearKB(t)
+		t.Setenv(key, bad)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), key) {
+			t.Errorf("%s=%s: err = %v, want it named", key, bad, err)
 		}
 	}
 }

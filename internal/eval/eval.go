@@ -134,6 +134,15 @@ type Outcome struct {
 	Scores  []float64
 	Latency search.Latency
 	Err     error
+
+	// The product guard (in-process runs only). Generic[i] says whether item i
+	// is about no particular product. Dropped are the hits the guard removed,
+	// recorded in a sweep run. Guard is what the guard changed in this very
+	// search. Catalog is true when a catalog applied.
+	Generic []bool
+	Dropped []search.Drop
+	Guard   search.Guard
+	Catalog bool
 }
 
 // Runner asks the service one question.
@@ -151,9 +160,18 @@ type InProcess struct {
 // Run implements Runner.
 func (p InProcess) Run(ctx context.Context, q Question, threshold *float64) Outcome {
 	o := Outcome{Question: q}
-	r, err := p.Searcher.Search(ctx, search.Request{Query: q.Text, Language: q.Language, Scope: q.Scope, TopK: TopK,
-		Timeout: p.Timeout, Threshold: threshold})
+	req := search.Request{Query: q.Text, Language: q.Language, Scope: q.Scope, TopK: TopK,
+		Timeout: p.Timeout, Threshold: threshold}
+	if threshold != nil {
+		// A sweep run: keep more than TopK items (a generic hit that a margin
+		// removes lets a lower one in), no margin, and remember what the guard
+		// dropped, so every threshold and margin can be re-decided afterwards.
+		zero := 0.0
+		req.TopK, req.GenericMargin, req.KeepDropped = SweepDepth, &zero, true
+	}
+	r, err := p.Searcher.Search(ctx, req)
 	o.Latency = r.Latency
+	o.Guard, o.Dropped, o.Catalog = r.Guard, r.Dropped, r.Catalog
 	if err != nil {
 		o.Err = err
 		return o
@@ -162,9 +180,13 @@ func (p InProcess) Run(ctx context.Context, q Question, threshold *float64) Outc
 	for _, it := range r.Items {
 		o.IDs = append(o.IDs, it.ID)
 		o.Scores = append(o.Scores, it.Score)
+		o.Generic = append(o.Generic, len(it.Products) == 0)
 	}
 	return o
 }
+
+// SweepDepth is how many items a sweep run keeps per question.
+const SweepDepth = 10
 
 // Metrics are the quality and latency numbers of a set of outcomes.
 type Metrics struct {
@@ -264,18 +286,43 @@ func percentiles(xs []float64) Percentiles {
 // WithThreshold re-decides outcomes recorded with the threshold disabled, as if
 // the service had run at threshold t: items scoring below t are dropped, and
 // the status is HIT when any remain. Errors are kept as they are.
-func WithThreshold(outs []Outcome, t float64) []Outcome {
+func WithThreshold(outs []Outcome, t float64) []Outcome { return WithGuard(outs, t, 0) }
+
+// WithGuard is WithThreshold with a generic margin: an item that is about no
+// particular product must also clear t+margin. It also recomputes the guard
+// counts for (t, margin) from what the sweep run recorded: a dropped hit
+// counts when it would have cleared t, a generic item counts when it cleared t
+// but not t+margin.
+func WithGuard(outs []Outcome, t, margin float64) []Outcome {
 	res := make([]Outcome, len(outs))
 	for i, o := range outs {
 		res[i] = o
 		if o.Err != nil {
 			continue
 		}
-		res[i].IDs, res[i].Scores = nil, nil
+		res[i].IDs, res[i].Scores, res[i].Generic = nil, nil, nil
+		res[i].Guard = search.Guard{}
 		for j, s := range o.Scores {
-			if s >= t {
+			generic := j < len(o.Generic) && o.Generic[j]
+			switch {
+			case s < t:
+			case generic && s < t+margin:
+				res[i].Guard.GenericBelowMargin++
+			default:
 				res[i].IDs = append(res[i].IDs, o.IDs[j])
 				res[i].Scores = append(res[i].Scores, s)
+				res[i].Generic = append(res[i].Generic, generic)
+			}
+		}
+		for _, d := range o.Dropped {
+			if d.Score < t {
+				continue
+			}
+			switch d.Reason {
+			case search.GuardDroppedDisjoint:
+				res[i].Guard.DroppedDisjoint++
+			case search.GuardUnknownModel:
+				res[i].Guard.UnknownModel = 1
 			}
 		}
 		res[i].Status = string(search.StatusNoMatch)
@@ -286,9 +333,27 @@ func WithThreshold(outs []Outcome, t float64) []Outcome {
 	return res
 }
 
+// GuardTotal sums the guard counts of outcomes.
+func GuardTotal(outs []Outcome) search.Guard {
+	var g search.Guard
+	for _, o := range outs {
+		g = g.Add(o.Guard)
+	}
+	return g
+}
+
+// HasCatalog reports whether a product catalog applied to any outcome.
+func HasCatalog(outs []Outcome) bool {
+	return slices.ContainsFunc(outs, func(o Outcome) bool { return o.Catalog })
+}
+
 // SweepRow is the quality at one threshold.
 type SweepRow struct {
-	Threshold        float64
+	Threshold float64
+	// Margin is the generic margin of the row (0 without a catalog).
+	Margin float64
+	// Guard is what the product guard changed at this threshold and margin.
+	Guard            search.Guard
 	RecallAt3        float64
 	NoMatchPrecision float64
 	NoMatchRecall    float64
@@ -304,13 +369,24 @@ func SweepThresholds() []float64 {
 	return ts
 }
 
-// Sweep computes the metrics of outs at each threshold.
+// SweepMargins are the generic margins swept when a catalog applies.
+func SweepMargins() []float64 { return []float64{0, 0.02, 0.04, 0.06} }
+
+// Sweep computes the metrics of outs at each threshold, without a margin.
 func Sweep(outs []Outcome, thresholds []float64) []SweepRow {
-	rows := make([]SweepRow, 0, len(thresholds))
+	return SweepGrid(outs, thresholds, []float64{0})
+}
+
+// SweepGrid computes the metrics of outs at each threshold and margin.
+func SweepGrid(outs []Outcome, thresholds, margins []float64) []SweepRow {
+	rows := make([]SweepRow, 0, len(thresholds)*len(margins))
 	for _, t := range thresholds {
-		m := Compute(WithThreshold(outs, t))
-		rows = append(rows, SweepRow{Threshold: t, RecallAt3: m.RecallAt3, NoMatchPrecision: m.NoMatchPrecision,
-			NoMatchRecall: m.NoMatchRecall, NoMatchAnswered: m.NoMatchAnswered})
+		for _, mg := range margins {
+			re := WithGuard(outs, t, mg)
+			m := Compute(re)
+			rows = append(rows, SweepRow{Threshold: t, Margin: mg, Guard: GuardTotal(re), RecallAt3: m.RecallAt3,
+				NoMatchPrecision: m.NoMatchPrecision, NoMatchRecall: m.NoMatchRecall, NoMatchAnswered: m.NoMatchAnswered})
+		}
 	}
 	return rows
 }
@@ -318,7 +394,7 @@ func Sweep(outs []Outcome, thresholds []float64) []SweepRow {
 // Best picks the sweep row with the highest recall@3 among those whose NO_MATCH
 // precision is at least minPrecision (a threshold that answers NO_MATCH to
 // nothing has an undefined precision and qualifies only when minPrecision is
-// 0). Ties go to the higher threshold, the more cautious choice. ok is false
+// 0). Ties go to the higher threshold plus margin, the more cautious choice. ok is false
 // when no row qualifies.
 func Best(rows []SweepRow, minPrecision float64) (SweepRow, bool) {
 	var best SweepRow
@@ -327,7 +403,7 @@ func Best(rows []SweepRow, minPrecision float64) (SweepRow, bool) {
 		if math.IsNaN(r.NoMatchPrecision) && minPrecision > 0 || r.NoMatchPrecision < minPrecision {
 			continue
 		}
-		if !found || r.RecallAt3 > best.RecallAt3 || r.RecallAt3 == best.RecallAt3 && r.Threshold > best.Threshold {
+		if !found || r.RecallAt3 > best.RecallAt3 || r.RecallAt3 == best.RecallAt3 && r.Threshold+r.Margin > best.Threshold+best.Margin {
 			best, found = r, true
 		}
 	}

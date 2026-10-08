@@ -12,6 +12,8 @@ import (
 
 	"github.com/rasonyang/aicc-knowledge/internal/config"
 	"github.com/rasonyang/aicc-knowledge/internal/eval"
+	"github.com/rasonyang/aicc-knowledge/internal/search"
+	"github.com/rasonyang/aicc-knowledge/internal/store"
 )
 
 // runEval measures recall@3, NO_MATCH precision and per-stage latency over a
@@ -26,7 +28,7 @@ func runEval(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	url := fs.String("url", "", "base URL of a running service; default is in process (needs KB_MEILI_URL and KB_TEI_URL)")
 	apiKey := fs.String("api-key", "", "bearer API key for -url")
 	asJSON := fs.Bool("json", false, "print JSON instead of text")
-	sweep := fs.Bool("sweep", false, "re-run with the NO_MATCH threshold disabled and report thresholds 0.50 to 0.95 (in process only)")
+	sweep := fs.Bool("sweep", false, "re-run with the NO_MATCH threshold disabled and report thresholds 0.50 to 0.95, and the generic margin 0 to 0.06 when a product catalog is live (in process only)")
 	minPrecision := fs.Float64("min-precision", 0.9, "NO_MATCH precision the sweep's best row must reach")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
@@ -84,7 +86,26 @@ func runEval(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if *url != "" {
 		runner = eval.HTTP{BaseURL: *url, APIKey: *apiKey}
 	} else {
-		s, err := newSearcher(cfg, nil)
+		// The product guard needs the catalog of the live publications, which is
+		// in PostgreSQL. Without KB_DATABASE_URL eval runs as if there were none.
+		var catalogs search.Catalogs
+		if cfg.DatabaseURL != "" {
+			st, err := store.Open(ctx, cfg.DatabaseURL, 2)
+			if err != nil {
+				fmt.Fprintf(stderr, "eval: %v\n", err)
+				return exitFailure
+			}
+			defer st.Close()
+			cache := &search.CatalogCache{Queries: st.Queries}
+			if err := cache.Refresh(ctx); err != nil {
+				fmt.Fprintf(stderr, "eval: load the product catalogs: %v\n", err)
+				return exitFailure
+			}
+			catalogs = cache
+		} else {
+			fmt.Fprintln(stderr, "eval: KB_DATABASE_URL is not set; the product guard is off (set it to evaluate with the live publication's product catalog)")
+		}
+		s, err := newSearcher(cfg, nil, catalogs)
 		if err != nil {
 			fmt.Fprintf(stderr, "eval: %v\n", err)
 			return exitFailure

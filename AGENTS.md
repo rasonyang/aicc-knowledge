@@ -63,7 +63,8 @@ The content path runs offline as CLI subcommands of one binary (`cmd/aicc-knowle
    - Writes `parsed_sections`. Their identity is `(file_version_id, ordinal)` plus `source_ref`, never the row id, because sections are rewritten.
    - Imports facts: `<name>.facts.yaml` next to `<name>.xlsx` maps sheets to typed `fact_rows` (`internal/facts`). A failed import makes the table `UNAVAILABLE`; stale or partial rows are never served.
    - Imports Q&A sheets: `<name>.qa.yaml` maps question/answer columns to `XLSX_QA_ROW` sections; `generate` turns them into candidates without the LLM (it only shortens an overlong answer).
-   - Then it enqueues a GENERATE job.
+   - Validates the product catalog: the one `products.yaml` at the root of `KB_S3_PREFIX` (`internal/products`) is stored per file version in `product_catalogs`; another one anywhere fails `CATALOG_MISPLACED`.
+   - Then it enqueues a GENERATE job (not for a catalog).
 3. **`generate`** (`internal/generate`, `internal/llm`, `internal/candidate`):
    - One LLM call per section, using JSON-schema output and a versioned prompt.
    - Stub sections (title or boilerplate only) are not sent; they become context of the next section. Deterministic post-validation (length, markdown, language, dedupe, figures must occur in the source) and the `CONTAINS_FIGURES` flag.
@@ -73,6 +74,7 @@ The content path runs offline as CLI subcommands of one binary (`cmd/aicc-knowle
 5. **`publish` / `rollback`** (`internal/publish`, `internal/meili`, `internal/embed`):
    - **Publish:**
      - Snapshot the APPROVED candidates of current versions into `publication_items`.
+     - Tag each item with the catalog products its question or source file name names (`publication_items.products`, `publications.catalog_id`; a catalog file that exists but is not `PARSED` refuses the publish).
      - Embed every phrasing with TEI and build a staging index.
      - Wait for every Meilisearch task, then swap with `faq_<lang>`, then commit `LIVE`.
    - **Swap behavior:** `/swap-indexes` exchanges contents, so `publications.content_uid` tracks where each publication's documents live.
@@ -80,6 +82,7 @@ The content path runs offline as CLI subcommands of one binary (`cmd/aicc-knowle
 
 The read path is `serve` (`internal/httpapi` on the generated `internal/api`, plus `internal/search`):
 - `POST /v1/search` embeds the query, runs a pure-vector Meilisearch search, applies the per-language threshold to the hits itself (never `rankingScoreThreshold`: Meilisearch takes a much slower path when fewer than `limit` hits clear it), and reports per-stage latency. It never queries PostgreSQL, because the live uid only ever holds published content.
+- When the language's live publication has a catalog, the searcher guards the over-fetched hits before the threshold (`internal/search/guard.go`): drop a hit about other products than the query names, `NO_MATCH` for an unknown model token, a margin for generic hits. `serve` holds each live catalog in memory and refreshes it every `KB_PRODUCTS_REFRESH_SEC`, so search still never queries PostgreSQL.
 - `POST /v1/facts/{table}/lookup` is an exact-match lookup in PostgreSQL.
 - A separate unauthenticated ops listener serves `/metrics`, `/healthz` and `/readyz`. Readiness probes TEI at `/info`, because TEI's `/health` runs an inference and queues behind load.
 
@@ -100,6 +103,7 @@ The read path is `serve` (`internal/httpapi` on the generated `internal/api`, pl
   - `.xlsx` is parsed with excelize. Sheets with curated Q&A columns are imported directly through `<name>.qa.yaml`.
   - `.doc` and `.xls` are `UNSUPPORTED_FORMAT`. No PDF, no OCR.
 - **Embeddings:** TEI (CPU) serving bge-m3. Meilisearch `userProvided` vectors, one index per language (`faq_en`, `faq_zh`), and one vector per question phrasing.
+- **Product catalog:** one `products.yaml` at the root of the S3 prefix, versioned like any source file; product tags are snapshotted per publication so a rollback serves the tags it was published with. No reranker (tried offline: worse and slow on CPU).
 - **Publishing:** nothing unreviewed is ever published. Publish builds a new index, then swaps it atomically; every publication is versioned.
 - **Admin:** operations are CLI subcommands. The HTTP API serves only AICC's read paths and health.
 

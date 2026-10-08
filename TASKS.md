@@ -70,7 +70,7 @@ Known limits of M4: the deterministic rules cannot judge whether an answer is co
 - [x] Retention: keep the N most recent non-live publication indexes (`KB_PUBLISH_RETAIN_INDEXES`, default 3) and delete older indexes; publication rows and items are kept forever. Add the config key and its `.env.example` entry when this is implemented.
 - [x] `POST /v1/search`: embed the query, search with the pure-vector gate (`semanticRatio` 1.0, empty `q`, `rankingScoreThreshold`; caveat C4), scope filter, topK, timeout mapping to 504 `UPSTREAM_TIMEOUT`, per-stage latency in the response and in the histograms.
 - [x] `eval`: input a question CSV with expected ids; output recall@3, NO_MATCH precision and per-stage latency p50 and p90.
-- [ ] Calibrate `KB_SEARCH_THRESHOLD_EN` and `KB_SEARCH_THRESHOLD_ZH` with `eval` on real data. A first calibration on a small synthetic sample is done (defaults 0.85 EN and 0.85 ZH, see research caveat C4); the box stays open until real questions and real documents have been run through `eval --sweep`.
+- [ ] Calibrate `KB_SEARCH_THRESHOLD_EN` and `KB_SEARCH_THRESHOLD_ZH` with `eval` on real data. A first calibration on a small synthetic sample is done (defaults 0.85 EN and 0.85 ZH, see research caveat C4); the ZH default is now 0.875 from an offline calibration on a private real sample together with the product guard (M7); the box stays open until real questions and real documents have been run through `eval --sweep`.
 - [x] Test: a publish failure leaves the live index untouched.
 - [x] Test: rollback restores the previous publication, and a two-step rollback (to a publication older than the previous one) works.
 - [x] Test: rollback to a publication whose index was pruned takes the rebuild path and serves the same content.
@@ -93,9 +93,22 @@ Found by a validation run on a private, desensitized corpus. Each fix has its ow
 - [x] Stub sections no longer reach the LLM: after removing boilerplate lines a body under 20 characters is context for the next section. Every prompt carries the document title and heading path; prompt `faq-v2` returns nothing when the section states no answer; an answer figure (digits, full-width digits, model numbers) absent from the source is dropped as `UNGROUNDED_FIGURE`.
 - [x] `candidate.DetectLanguage`: Chinese with many Latin product names is ZH (6 or more Han characters, or 4 or more and 15% of the letters).
 - [x] `.xlsx` content is chunked by size (6000 characters, header repeated); a single row over the limit is cut with `SECTION_TRUNCATED`. Generate warns whenever it cuts input.
-- [x] `CONTAINS_FIGURES` ignores letter-first model tokens (`X5`, `ZQ 3S`, `A2`); `4K`, `60fps`, `1999元` and plain numbers still count.
+- [x] `CONTAINS_FIGURES` ignores letter-first model tokens (`K5`, `ZQ 3S`, `A2`); `4K`, `60fps`, `1999元` and plain numbers still count.
 - [x] `generate --version <id>` claims only that version's job.
 - [x] An outline-level paragraph over 40 characters or ending in `。！.!` is body text (`HEADING_DEMOTED`); a short question heading stays a heading.
 - [x] Consecutive identical heading entries collapse in a heading path.
 - [x] Q&A workbook direct import: `<name>.qa.yaml` mapping, `XLSX_QA_ROW` sections (migration 00013), generate without the LLM (`qa-import-v1`) or with one condense call (`qa-condense-v1`), review/export/publish unchanged.
 Known limits of M6: the verbatim import trusts the sheet, so every row still needs a reviewer; spelled-out numbers (`五十`, `fifty`) are not compared by the grounding check, so a condensed or generated answer that rewrites `50` as `五十` is dropped; a stub's context goes to the next section that is sent only; the ordinals of Q&A rows follow the content chunks, so a facts mapping that removes a content sheet shifts them and stales their candidates (regenerate by re-arming the version).
+
+## M7. Product catalog and search guard
+
+Motivated by an offline experiment on a private real sample (no data in this repository): most wrong HITs were product-model confusion and generic FAQs matching off-topic questions. Synthetic fixtures only.
+
+- [x] `internal/products`: normalization (NFKC, case, hyphen and whitespace, Chinese numerals after a Latin word), longest-match extraction with boundaries, lists, symmetric compatibility, model-token detector; table tests.
+- [x] `products.yaml` at the root of `KB_S3_PREFIX`: scan classifies it, parse validates and stores it (migration 00014 `product_catalogs`), `CATALOG_INVALID`, a second one `CATALOG_MISPLACED`.
+- [x] Publish tags documents with products and snapshots them with the catalog id; rollback (swap and rebuild) restores the old product sets; a catalog file that is not `PARSED` refuses the publish (`CATALOG_UNAVAILABLE`).
+- [x] Search guard R1 (drop other products, compatibility), R2 (unknown model is NO_MATCH), R3 (generic margin); no catalog means unchanged behavior; `serve` refreshes live catalogs in memory (`KB_PRODUCTS_REFRESH_SEC`); counter `kb_product_guard_total`.
+- [x] `KB_SEARCH_THRESHOLD_ZH` 0.875, `KB_SEARCH_GENERIC_MARGIN_ZH` 0.04, `KB_SEARCH_GENERIC_MARGIN_EN` 0; `.env.example`, research caveat C4, CHANGELOG, README.
+- [x] `eval` reports the guard counts and `--sweep` sweeps the generic margin when a catalog is live.
+- [x] Tests: catalog lifecycle through S3 (valid, invalid, second catalog, change, rollback); search with a synthetic corpus (other product never returned, compatible allowed, unknown model, generic margin, no catalog unchanged); guard latency under 1 ms.
+- Deferred: a lazy catalog refresh when a hit carries a newer publication id than the cached catalog; a per-product `family:` override in `products.yaml` (families are the leading Latin word of each alias; add the override if a prefix turns out ambiguous).

@@ -10,6 +10,7 @@ import (
 	"math"
 
 	"github.com/rasonyang/aicc-knowledge/internal/domain"
+	"github.com/rasonyang/aicc-knowledge/internal/search"
 )
 
 // Report is the metrics of one language, or of all questions (Language "ALL").
@@ -20,6 +21,10 @@ type Report struct {
 	Sweep []SweepRow
 	// Best is the sweep row chosen by Best at the requested minimum precision.
 	Best *SweepRow
+	// Guard is what the product guard changed over the run (a non-sweep run),
+	// and Catalog says whether a catalog applied to any question.
+	Guard   search.Guard
+	Catalog bool
 }
 
 // Run asks every question once and returns the outcomes in input order.
@@ -46,11 +51,11 @@ func Reports(outs []Outcome) []Report {
 		}
 		if len(sub) > 0 {
 			present++
-			reps = append(reps, Report{Language: string(l), Metrics: Compute(sub)})
+			reps = append(reps, Report{Language: string(l), Metrics: Compute(sub), Guard: GuardTotal(sub), Catalog: HasCatalog(sub)})
 		}
 	}
 	if present > 1 {
-		reps = append(reps, Report{Language: "ALL", Metrics: Compute(outs)})
+		reps = append(reps, Report{Language: "ALL", Metrics: Compute(outs), Guard: GuardTotal(outs), Catalog: HasCatalog(outs)})
 	}
 	return reps
 }
@@ -69,7 +74,11 @@ func SweepReports(outs []Outcome, minPrecision float64) []Report {
 				}
 			}
 		}
-		reps[i].Sweep = Sweep(sub, SweepThresholds())
+		margins := []float64{0}
+		if reps[i].Catalog {
+			margins = SweepMargins()
+		}
+		reps[i].Sweep = SweepGrid(sub, SweepThresholds(), margins)
 		if b, ok := Best(reps[i].Sweep, minPrecision); ok {
 			reps[i].Best = &b
 		}
@@ -95,14 +104,26 @@ func WriteText(w io.Writer, reps []Report, minPrecision float64) {
 		fmt.Fprintf(w, "latency ms          p50    p90\n")
 		fmt.Fprintf(w, "  embedding        %6.1f %6.1f\n  search           %6.1f %6.1f\n  total            %6.1f %6.1f\n",
 			m.Embedding.P50, m.Embedding.P90, m.Search.P50, m.Search.P90, m.Total.P50, m.Total.P90)
+		if r.Catalog && len(r.Sweep) == 0 {
+			fmt.Fprintf(w, "product guard       dropped_disjoint %d, unknown_model %d, generic_below_margin %d\n",
+				r.Guard.DroppedDisjoint, r.Guard.UnknownModel, r.Guard.GenericBelowMargin)
+		}
 		if len(r.Sweep) > 0 {
-			fmt.Fprintf(w, "threshold sweep\n  threshold  recall@3  NO_MATCH-precision  NO_MATCH-recall  answered-NO_MATCH\n")
+			fmt.Fprintf(w, "threshold sweep")
+			if r.Catalog {
+				fmt.Fprintf(w, " (product catalog live: generic margin swept; guard counts are dropped_disjoint/unknown_model/generic_below_margin)")
+			}
+			fmt.Fprintf(w, "\n  threshold  margin  recall@3  NO_MATCH-precision  NO_MATCH-recall  answered-NO_MATCH  guard\n")
 			for _, s := range r.Sweep {
 				mark := ""
-				if r.Best != nil && s.Threshold == r.Best.Threshold {
+				if r.Best != nil && s.Threshold == r.Best.Threshold && s.Margin == r.Best.Margin {
 					mark = "  <- best at precision >= " + fmt.Sprintf("%.2f", minPrecision)
 				}
-				fmt.Fprintf(w, "  %.3f      %s     %s               %s            %d%s\n", s.Threshold, pct(s.RecallAt3), pct(s.NoMatchPrecision), pct(s.NoMatchRecall), s.NoMatchAnswered, mark)
+				guard := ""
+				if r.Catalog {
+					guard = fmt.Sprintf("%d/%d/%d", s.Guard.DroppedDisjoint, s.Guard.UnknownModel, s.Guard.GenericBelowMargin)
+				}
+				fmt.Fprintf(w, "  %.3f      %.2f    %s     %s               %s            %d              %s%s\n", s.Threshold, s.Margin, pct(s.RecallAt3), pct(s.NoMatchPrecision), pct(s.NoMatchRecall), s.NoMatchAnswered, guard, mark)
 			}
 			if r.Best == nil {
 				fmt.Fprintf(w, "  no threshold reaches NO_MATCH precision %.2f\n", minPrecision)
@@ -127,8 +148,15 @@ func WriteJSON(w io.Writer, reps []Report, minPrecision float64) error {
 		P50 jsonNum `json:"p50"`
 		P90 jsonNum `json:"p90"`
 	}
+	type guard struct {
+		DroppedDisjoint    int `json:"droppedDisjoint"`
+		UnknownModel       int `json:"unknownModel"`
+		GenericBelowMargin int `json:"genericBelowMargin"`
+	}
 	type row struct {
 		Threshold        jsonNum `json:"threshold"`
+		GenericMargin    jsonNum `json:"genericMargin"`
+		Guard            *guard  `json:"guard,omitempty"`
 		RecallAt3        jsonNum `json:"recallAt3"`
 		NoMatchPrecision jsonNum `json:"noMatchPrecision"`
 		NoMatchRecall    jsonNum `json:"noMatchRecall"`
@@ -149,11 +177,21 @@ func WriteJSON(w io.Writer, reps []Report, minPrecision float64) error {
 			Search    lat `json:"search"`
 			Total     lat `json:"total"`
 		} `json:"latencyMs"`
-		Sweep []row `json:"sweep,omitempty"`
-		Best  *row  `json:"best,omitempty"`
+		Catalog bool   `json:"productCatalog"`
+		Guard   *guard `json:"guard,omitempty"`
+		Sweep   []row  `json:"sweep,omitempty"`
+		Best    *row   `json:"best,omitempty"`
 	}
-	toRow := func(s SweepRow) row {
-		return row{jsonNum(s.Threshold), jsonNum(s.RecallAt3), jsonNum(s.NoMatchPrecision), jsonNum(s.NoMatchRecall), s.NoMatchAnswered}
+	toGuard := func(g search.Guard) *guard {
+		return &guard{g.DroppedDisjoint, g.UnknownModel, g.GenericBelowMargin}
+	}
+	toRow := func(s SweepRow, catalog bool) row {
+		r := row{Threshold: jsonNum(s.Threshold), GenericMargin: jsonNum(s.Margin), RecallAt3: jsonNum(s.RecallAt3),
+			NoMatchPrecision: jsonNum(s.NoMatchPrecision), NoMatchRecall: jsonNum(s.NoMatchRecall), NoMatchAnswered: s.NoMatchAnswered}
+		if catalog {
+			r.Guard = toGuard(s.Guard)
+		}
+		return r
 	}
 	var out struct {
 		MinPrecision jsonNum `json:"minNoMatchPrecision,omitempty"`
@@ -167,11 +205,15 @@ func WriteJSON(w io.Writer, reps []Report, minPrecision float64) error {
 		x.LatencyMs.Embedding = lat{jsonNum(m.Embedding.P50), jsonNum(m.Embedding.P90)}
 		x.LatencyMs.Search = lat{jsonNum(m.Search.P50), jsonNum(m.Search.P90)}
 		x.LatencyMs.Total = lat{jsonNum(m.Total.P50), jsonNum(m.Total.P90)}
+		x.Catalog = r.Catalog
+		if r.Catalog && len(r.Sweep) == 0 {
+			x.Guard = toGuard(r.Guard)
+		}
 		for _, s := range r.Sweep {
-			x.Sweep = append(x.Sweep, toRow(s))
+			x.Sweep = append(x.Sweep, toRow(s, r.Catalog))
 		}
 		if r.Best != nil {
-			b := toRow(*r.Best)
+			b := toRow(*r.Best, r.Catalog)
 			x.Best = &b
 		}
 		out.Reports = append(out.Reports, x)

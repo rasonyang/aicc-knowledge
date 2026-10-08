@@ -63,9 +63,17 @@ type Config struct {
 	// Meilisearch index for a fast rollback.
 	PublishRetainIndexes int
 
-	SearchScopeKeys        []string
-	SearchThresholdEN      float64
-	SearchThresholdZH      float64
+	SearchScopeKeys   []string
+	SearchThresholdEN float64
+	SearchThresholdZH float64
+	// SearchGenericMarginEN and SearchGenericMarginZH are added to the
+	// threshold for a hit about no particular product, when a product catalog
+	// is loaded.
+	SearchGenericMarginEN float64
+	SearchGenericMarginZH float64
+	// ProductsRefreshSec is how often serve reloads the catalog of each
+	// language's live publication.
+	ProductsRefreshSec     int
 	SearchDefaultTimeoutMS int
 	SearchMaxTimeoutMS     int
 
@@ -136,7 +144,10 @@ func Load() (Config, error) {
 
 		SearchScopeKeys:        splitList(p.str("KB_SEARCH_SCOPE_KEYS", "")),
 		SearchThresholdEN:      p.float("KB_SEARCH_THRESHOLD_EN", 0.85),
-		SearchThresholdZH:      p.float("KB_SEARCH_THRESHOLD_ZH", 0.85),
+		SearchThresholdZH:      p.float("KB_SEARCH_THRESHOLD_ZH", 0.875),
+		SearchGenericMarginEN:  p.float("KB_SEARCH_GENERIC_MARGIN_EN", 0),
+		SearchGenericMarginZH:  p.float("KB_SEARCH_GENERIC_MARGIN_ZH", 0.04),
+		ProductsRefreshSec:     p.integer("KB_PRODUCTS_REFRESH_SEC", 30),
 		SearchDefaultTimeoutMS: p.integer("KB_SEARCH_DEFAULT_TIMEOUT_MS", 2000),
 		SearchMaxTimeoutMS:     p.integer("KB_SEARCH_MAX_TIMEOUT_MS", 5000),
 
@@ -202,6 +213,19 @@ func (c Config) validate() []error {
 		if v <= 0.5 || v > 1 {
 			errs = append(errs, fmt.Errorf("%s must be in (0.5, 1], got %v", key, v))
 		}
+	}
+	// A margin raises the bar for generic hits; the bar cannot pass a perfect
+	// score for a threshold in range.
+	for key, v := range map[string]float64{
+		"KB_SEARCH_GENERIC_MARGIN_EN": c.SearchGenericMarginEN,
+		"KB_SEARCH_GENERIC_MARGIN_ZH": c.SearchGenericMarginZH,
+	} {
+		if v < 0 || v >= 0.5 {
+			errs = append(errs, fmt.Errorf("%s must be in [0, 0.5), got %v", key, v))
+		}
+	}
+	if c.ProductsRefreshSec < 1 {
+		errs = append(errs, errors.New("KB_PRODUCTS_REFRESH_SEC must be >= 1"))
 	}
 	if c.SearchDefaultTimeoutMS < 1 {
 		errs = append(errs, errors.New("KB_SEARCH_DEFAULT_TIMEOUT_MS must be >= 1"))

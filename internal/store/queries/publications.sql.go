@@ -32,7 +32,7 @@ func (q *Queries) FailPublication(ctx context.Context, arg FailPublicationParams
 
 const getLivePublication = `-- name: GetLivePublication :one
 
-SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid FROM publications
+SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id FROM publications
 WHERE language = $1 AND state = 'LIVE'
 `
 
@@ -51,12 +51,13 @@ func (q *Queries) GetLivePublication(ctx context.Context, language string) (Publ
 		&i.LiveAt,
 		&i.SupersededAt,
 		&i.ContentUid,
+		&i.CatalogID,
 	)
 	return i, err
 }
 
 const getPublication = `-- name: GetPublication :one
-SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid FROM publications WHERE id = $1
+SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id FROM publications WHERE id = $1
 `
 
 func (q *Queries) GetPublication(ctx context.Context, id uuid.UUID) (Publication, error) {
@@ -73,28 +74,35 @@ func (q *Queries) GetPublication(ctx context.Context, id uuid.UUID) (Publication
 		&i.LiveAt,
 		&i.SupersededAt,
 		&i.ContentUid,
+		&i.CatalogID,
 	)
 	return i, err
 }
 
 const insertPublication = `-- name: InsertPublication :exec
-INSERT INTO publications (id, language, index_uid) VALUES ($1, $2, $3)
+INSERT INTO publications (id, language, index_uid, catalog_id) VALUES ($1, $2, $3, $4)
 `
 
 type InsertPublicationParams struct {
-	ID       uuid.UUID `json:"id"`
-	Language string    `json:"language"`
-	IndexUid string    `json:"indexUid"`
+	ID        uuid.UUID  `json:"id"`
+	Language  string     `json:"language"`
+	IndexUid  string     `json:"indexUid"`
+	CatalogID *uuid.UUID `json:"catalogId"`
 }
 
 func (q *Queries) InsertPublication(ctx context.Context, arg InsertPublicationParams) error {
-	_, err := q.db.Exec(ctx, insertPublication, arg.ID, arg.Language, arg.IndexUid)
+	_, err := q.db.Exec(ctx, insertPublication,
+		arg.ID,
+		arg.Language,
+		arg.IndexUid,
+		arg.CatalogID,
+	)
 	return err
 }
 
 const insertPublicationItem = `-- name: InsertPublicationItem :exec
-INSERT INTO publication_items (publication_id, candidate_id, content_hash, question, alternate_questions, answer, source_ref, scope)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO publication_items (publication_id, candidate_id, content_hash, question, alternate_questions, answer, source_ref, scope, products)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 `
 
 type InsertPublicationItemParams struct {
@@ -106,6 +114,7 @@ type InsertPublicationItemParams struct {
 	Answer             string    `json:"answer"`
 	SourceRef          string    `json:"sourceRef"`
 	Scope              []byte    `json:"scope"`
+	Products           []string  `json:"products"`
 }
 
 func (q *Queries) InsertPublicationItem(ctx context.Context, arg InsertPublicationItemParams) error {
@@ -118,12 +127,13 @@ func (q *Queries) InsertPublicationItem(ctx context.Context, arg InsertPublicati
 		arg.Answer,
 		arg.SourceRef,
 		arg.Scope,
+		arg.Products,
 	)
 	return err
 }
 
 const listBuildingPublications = `-- name: ListBuildingPublications :many
-SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid FROM publications WHERE language = $1 AND state = 'BUILDING' ORDER BY created_at
+SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id FROM publications WHERE language = $1 AND state = 'BUILDING' ORDER BY created_at
 `
 
 func (q *Queries) ListBuildingPublications(ctx context.Context, language string) ([]Publication, error) {
@@ -146,6 +156,7 @@ func (q *Queries) ListBuildingPublications(ctx context.Context, language string)
 			&i.LiveAt,
 			&i.SupersededAt,
 			&i.ContentUid,
+			&i.CatalogID,
 		); err != nil {
 			return nil, err
 		}
@@ -158,7 +169,7 @@ func (q *Queries) ListBuildingPublications(ctx context.Context, language string)
 }
 
 const listPublicationItems = `-- name: ListPublicationItems :many
-SELECT publication_id, candidate_id, content_hash, question, alternate_questions, answer, source_ref, scope FROM publication_items WHERE publication_id = $1 ORDER BY candidate_id
+SELECT publication_id, candidate_id, content_hash, question, alternate_questions, answer, source_ref, scope, products FROM publication_items WHERE publication_id = $1 ORDER BY candidate_id
 `
 
 func (q *Queries) ListPublicationItems(ctx context.Context, publicationID uuid.UUID) ([]PublicationItem, error) {
@@ -179,6 +190,7 @@ func (q *Queries) ListPublicationItems(ctx context.Context, publicationID uuid.U
 			&i.Answer,
 			&i.SourceRef,
 			&i.Scope,
+			&i.Products,
 		); err != nil {
 			return nil, err
 		}
@@ -191,7 +203,7 @@ func (q *Queries) ListPublicationItems(ctx context.Context, publicationID uuid.U
 }
 
 const listPublicationsOfLanguage = `-- name: ListPublicationsOfLanguage :many
-SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid FROM publications WHERE language = $1 ORDER BY created_at, id
+SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id FROM publications WHERE language = $1 ORDER BY created_at, id
 `
 
 func (q *Queries) ListPublicationsOfLanguage(ctx context.Context, language string) ([]Publication, error) {
@@ -214,6 +226,7 @@ func (q *Queries) ListPublicationsOfLanguage(ctx context.Context, language strin
 			&i.LiveAt,
 			&i.SupersededAt,
 			&i.ContentUid,
+			&i.CatalogID,
 		); err != nil {
 			return nil, err
 		}
@@ -226,7 +239,7 @@ func (q *Queries) ListPublicationsOfLanguage(ctx context.Context, language strin
 }
 
 const listSupersededPublications = `-- name: ListSupersededPublications :many
-SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid FROM publications WHERE language = $1 AND state = 'SUPERSEDED'
+SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id FROM publications WHERE language = $1 AND state = 'SUPERSEDED'
 ORDER BY superseded_at DESC, created_at DESC, id DESC
 `
 
@@ -251,6 +264,7 @@ func (q *Queries) ListSupersededPublications(ctx context.Context, language strin
 			&i.LiveAt,
 			&i.SupersededAt,
 			&i.ContentUid,
+			&i.CatalogID,
 		); err != nil {
 			return nil, err
 		}
@@ -263,7 +277,7 @@ func (q *Queries) ListSupersededPublications(ctx context.Context, language strin
 }
 
 const lockLivePublication = `-- name: LockLivePublication :one
-SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid FROM publications WHERE language = $1 AND state = 'LIVE' FOR UPDATE
+SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id FROM publications WHERE language = $1 AND state = 'LIVE' FOR UPDATE
 `
 
 func (q *Queries) LockLivePublication(ctx context.Context, language string) (Publication, error) {
@@ -280,12 +294,13 @@ func (q *Queries) LockLivePublication(ctx context.Context, language string) (Pub
 		&i.LiveAt,
 		&i.SupersededAt,
 		&i.ContentUid,
+		&i.CatalogID,
 	)
 	return i, err
 }
 
 const lockPublication = `-- name: LockPublication :one
-SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid FROM publications WHERE id = $1 FOR UPDATE
+SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id FROM publications WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockPublication(ctx context.Context, id uuid.UUID) (Publication, error) {
@@ -302,6 +317,7 @@ func (q *Queries) LockPublication(ctx context.Context, id uuid.UUID) (Publicatio
 		&i.LiveAt,
 		&i.SupersededAt,
 		&i.ContentUid,
+		&i.CatalogID,
 	)
 	return i, err
 }

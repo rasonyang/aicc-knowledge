@@ -32,6 +32,7 @@ const (
 	MetricPublishTotal           = "kb_publish_total"
 	MetricPublishSeconds         = "kb_publish_seconds"
 	MetricRollbackTotal          = "kb_rollback_total"
+	MetricProductGuardTotal      = "kb_product_guard_total"
 )
 
 // Label keys (snake_case, Prometheus convention).
@@ -68,6 +69,7 @@ type Metrics struct {
 	publishTotal    metric.Int64Counter
 	publishSeconds  metric.Float64Histogram
 	rollbackTotal   metric.Int64Counter
+	productGuard    metric.Int64Counter
 }
 
 // NewMetrics registers every instrument on meter.
@@ -135,7 +137,18 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 	if m.rollbackTotal, err = meter.Int64Counter(MetricRollbackTotal, metric.WithDescription("Rollbacks by language and outcome (LIVE, FAILED).")); err != nil {
 		return nil, err
 	}
+	if m.productGuard, err = meter.Int64Counter(MetricProductGuardTotal, metric.WithDescription("Hits or searches the product guard changed, by language and outcome (dropped_disjoint, unknown_model, generic_below_margin).")); err != nil {
+		return nil, err
+	}
 	return &m, nil
+}
+
+// ObserveProductGuard adds n to the guard outcome counter: dropped_disjoint
+// (a hit about another product was dropped), unknown_model (the query names a
+// model the catalog does not know: NO_MATCH) or generic_below_margin (a
+// generic hit cleared the threshold but not threshold plus margin).
+func (m *Metrics) ObserveProductGuard(ctx context.Context, language, outcome string, n int64) {
+	m.productGuard.Add(ctx, n, metric.WithAttributes(attribute.String(LabelLanguage, language), attribute.String(LabelOutcome, outcome)))
 }
 
 // ObservePublish records one publish run. outcome is LIVE, FAILED,

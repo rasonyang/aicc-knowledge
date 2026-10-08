@@ -19,7 +19,7 @@ func TestFigures(t *testing.T) {
 		{"1,999 yuan and 3.5 kg", []string{"1999", "3.5"}},
 		{"It ends in 2024.", []string{"2024"}},
 		{"ZQ 3S 支持 4K", []string{"zq3s", "4"}},
-		{"X5 and Pro-2 and A2", []string{"x5", "pro2", "a2"}},
+		{"K5 and Pro-2 and A2", []string{"k5", "pro2", "a2"}},
 		{"30 days, 30 days", []string{"30"}},
 	}
 	for _, c := range cases {
@@ -44,8 +44,8 @@ func TestCheckGrounded(t *testing.T) {
 		{"no figures", "支持外接显示器。", "支持外接显示器，无需适配器。", false},
 		{"model grounded", "ZQ 3S 支持外接显示器。", "zq 3s 支持外接显示器。", false},
 		{"model grounded with spacing", "ZQ3S 支持。", "ZQ 3S 支持。", false},
-		{"invented model", "X6 支持防水。", "X5 支持防水。", true},
-		{"model digit is not a bare number", "支持 5 个。", "X5 支持防水。", true},
+		{"invented model", "X6 支持防水。", "K5 支持防水。", true},
+		{"model digit is not a bare number", "支持 5 个。", "K5 支持防水。", true},
 		{"4K grounded", "支持 4K 录制。", "支持 4K 录制，60fps。", false},
 		{"invented fps", "支持 4K 120fps 录制。", "支持 4K 录制，60fps。", true},
 	}

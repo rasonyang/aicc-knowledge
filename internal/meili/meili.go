@@ -96,14 +96,17 @@ const EmbedderName = "default"
 // the embedding under "default"; use SetVector. Scope values are strings and
 // every configured scope key is filterable as scope.<key>.
 type Document struct {
-	ID                 string                 `json:"id"`
-	Question           string                 `json:"question"`
-	AlternateQuestions []string               `json:"alternateQuestions"`
-	Answer             string                 `json:"answer"`
-	SourceRef          string                 `json:"sourceRef"`
-	Scope              map[string]string      `json:"scope,omitempty"`
-	PublicationID      string                 `json:"publicationId"`
-	Vectors            map[string][][]float32 `json:"_vectors"`
+	ID                 string            `json:"id"`
+	Question           string            `json:"question"`
+	AlternateQuestions []string          `json:"alternateQuestions"`
+	Answer             string            `json:"answer"`
+	SourceRef          string            `json:"sourceRef"`
+	Scope              map[string]string `json:"scope,omitempty"`
+	PublicationID      string            `json:"publicationId"`
+	// Products are the catalog product ids the document is about; empty means
+	// generic. The searcher's guard reads them from the hits.
+	Products []string               `json:"products"`
+	Vectors  map[string][][]float32 `json:"_vectors"`
 }
 
 // SetVector stores v as the document's only userProvided "default" embedding.
@@ -149,7 +152,7 @@ func DefaultSettings(dimensions int, scopeKeys []string) (Settings, error) {
 		SearchableAttributes: []string{"question", "alternateQuestions", "answer"},
 		FilterableAttributes: filterable,
 		DisplayedAttributes: []string{"id", "question", "alternateQuestions", "answer", "sourceRef",
-			"scope", "publicationId"},
+			"scope", "publicationId", "products"},
 	}, nil
 }
 
@@ -410,6 +413,7 @@ type Hit struct {
 	SourceRef          string            `json:"sourceRef"`
 	Scope              map[string]string `json:"scope"`
 	PublicationID      string            `json:"publicationId"`
+	Products           []string          `json:"products"`
 	Score              float64           `json:"_rankingScore"`
 }
 

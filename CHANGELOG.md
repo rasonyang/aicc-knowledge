@@ -4,6 +4,18 @@ All notable changes to aicc-knowledge are recorded here, newest first.
 
 ## Unreleased
 
+### Added (product catalog and search guard)
+
+- `products.yaml` at the root of `KB_S3_PREFIX` is the product catalog (strict YAML: `products: [{id, names, compatibleWith?}]`). Scan classifies it; parse validates it (unique ids, unique normalized names across products, `compatibleWith` naming known products) and stores it in `product_catalogs` (migration 00014) per file version: `PARSED`, or `PARSE_FAILED` with `CATALOG_INVALID`. A `products.yaml` anywhere else fails `CATALOG_MISPLACED`.
+- `internal/products`: NFKC, case, hyphen and whitespace normalization, Chinese numerals after a Latin word as digits, longest-match extraction with alphanumeric boundaries, lists, symmetric compatibility, and the model-token detector shared with the figure rule.
+- Publish tags each document with the products its question and alternates name, else its source file name names, else none; `publication_items.products` and `publications.catalog_id` snapshot them (rollback serves the same tags); the index documents carry `products`. A catalog file that exists but is not `PARSED` refuses the publish (`CATALOG_UNAVAILABLE`).
+- Search guard (only when the live publication has a catalog): drop hits about other products than the question names (compatible products count), `NO_MATCH` for an uncovered model-like token of a known product family (leading Latin word of an alias; iOS17, USB3, mp4 are not), and a generic-hit margin (`KB_SEARCH_GENERIC_MARGIN_ZH` 0.04, `KB_SEARCH_GENERIC_MARGIN_EN` 0). `serve` loads each language's live catalog at startup and every `KB_PRODUCTS_REFRESH_SEC` (default 30), so a search never queries PostgreSQL; counter `kb_product_guard_total{language,outcome}`.
+- `eval` uses the live catalog when `KB_DATABASE_URL` is set, reports the guard counts, and `--sweep` also sweeps the generic margin (0, 0.02, 0.04, 0.06).
+
+### Changed
+
+- `KB_SEARCH_THRESHOLD_ZH` defaults to 0.875 (was 0.85), calibrated offline on a private real sample together with the guard (research caveat C4).
+
 ### Added (Q&A workbook direct import)
 
 - `<name>.qa.yaml` next to `<name>.xlsx` maps the question, answer and alternate-question columns of a sheet (`sheets: [{sheet, headerStartRow?, headerRows, question, answer, alternates?, language?}]`, strict YAML). Scan classifies it like a facts mapping. Parse writes one `XLSX_QA_ROW` section per row (source reference `<objectKey>#<Sheet>!A<row>`), skips hidden rows (`HIDDEN_ROW_SKIPPED`) and rows with an empty question or answer (`QA_ROW_INCOMPLETE`), and excludes the covered sheets from content sections. A sheet named by both a facts and a Q&A mapping fails the workbook `QA_SHEET_CONFLICT`; a sheet or header missing from the workbook fails it `QA_INVALID`. Migration 00013 (`parsed_sections.qa_question`, `qa_alternates`, `qa_language`, kind `XLSX_QA_ROW`).
@@ -15,7 +27,7 @@ All notable changes to aicc-knowledge are recorded here, newest first.
 - Generate: the length gate counts heading and body; a question heading with a short answer is sent; stub sections (title or boilerplate only) are not sent and become context of the next section; every prompt has the document title and heading path; prompt `faq-v2` returns nothing when the section states no answer; an answer figure not in the source is dropped (`UNGROUNDED_FIGURE`); skipped and truncated sections are logged and counted (`SKIPPED_STUB`, `SKIPPED_NO_LANGUAGE`, `TRUNCATED`) and printed in the summary.
 - `candidate.DetectLanguage` no longer reads Chinese with many Latin product names as English.
 - `.xlsx` content is chunked by size (6000 characters, header repeated) instead of only by 50 rows; an oversized row is cut with `SECTION_TRUNCATED`.
-- `CONTAINS_FIGURES` no longer fires on letter-first model names (`X5`, `ZQ 3S`).
+- `CONTAINS_FIGURES` no longer fires on letter-first model names (`K5`, `ZQ 3S`).
 - `generate --version <id>` processes only that version's job instead of draining the queue.
 - Docx: outline-level paragraphs that read as sentences (over 40 characters, or ending in `。！.!`) are body text with a `HEADING_DEMOTED` warning; consecutive identical heading entries collapse.
 

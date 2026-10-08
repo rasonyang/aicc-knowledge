@@ -69,7 +69,16 @@ func serve(ctx context.Context, cfg config.Config) error {
 	}
 	slog.Info("migrations applied", "version", applied, "latest", latest)
 
-	searcher, err := newSearcher(cfg, prov.Metrics)
+	// The product catalog of each live publication, in memory: a search never
+	// queries PostgreSQL. A failure to load at startup fails serve, like a
+	// failed migration; later refresh failures keep the previous catalog.
+	catalogs := &search.CatalogCache{Queries: st.Queries}
+	if err := catalogs.Refresh(ctx); err != nil {
+		return fmt.Errorf("load the product catalogs: %w", err)
+	}
+	go catalogs.Run(ctx, time.Duration(cfg.ProductsRefreshSec)*time.Second)
+
+	searcher, err := newSearcher(cfg, prov.Metrics, catalogs)
 	if err != nil {
 		return err
 	}
@@ -123,7 +132,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 // newSearcher wires the query path: the query-side TEI (KB_TEI_URL, never the
 // batch instance) and Meilisearch. Neither client retries, and no client-level
 // timeout is set: the request budget is the context deadline.
-func newSearcher(cfg config.Config, m *obs.Metrics) (*search.Searcher, error) {
+func newSearcher(cfg config.Config, m *obs.Metrics, catalogs search.Catalogs) (*search.Searcher, error) {
 	emb, err := embed.New(embed.Config{BaseURL: cfg.TEIURL, Dimensions: cfg.EmbeddingDimensions, HTTPClient: &http.Client{}})
 	if err != nil {
 		return nil, err
@@ -146,5 +155,6 @@ func newSearcher(cfg config.Config, m *obs.Metrics) (*search.Searcher, error) {
 	return &search.Searcher{
 		Meili: ms, Embedder: emb, ScopeKeys: cfg.SearchScopeKeys,
 		ThresholdEN: cfg.SearchThresholdEN, ThresholdZH: cfg.SearchThresholdZH, IndexPrefix: cfg.MeiliIndexPrefix, Metrics: m,
+		GenericMarginEN: cfg.SearchGenericMarginEN, GenericMarginZH: cfg.SearchGenericMarginZH, Catalogs: catalogs,
 	}, nil
 }

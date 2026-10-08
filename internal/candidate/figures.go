@@ -41,7 +41,7 @@ func anyFigures(list []string) bool {
 //     flagged because it is mostly a pronoun;
 //   - a Chinese numeral used as a quantity (see chineseQuantity).
 //
-// Letter-first model tokens are not figures (see modelToken): X5, A2, ZQ 3,
+// Letter-first model tokens are not figures (see modelToken): K5, A2, ZQ 3,
 // ZQ 3S. Digit-first tokens (4K, 60fps, 128GB, 1999元) and plain numbers are.
 func ContainsFigures(text string) bool {
 	text = modelToken.ReplaceAllString(text, " ")
@@ -57,7 +57,7 @@ func ContainsFigures(text string) bool {
 }
 
 // modelToken matches a letter-first product model: capital letters, an
-// optional space or hyphen, one or two digits and up to two letters (X5, A2,
+// optional space or hyphen, one or two digits and up to two letters (K5, A2,
 // ZQ 3, ZQ 3S, Pro-2), or a capitalised word, an optional hyphen and the
 // digits (Pro-2, Max5). A capitalised word followed by a space and a number
 // ("Open 24 hours", "Step 3") is not a model. The match must end at a word

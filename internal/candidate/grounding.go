@@ -19,7 +19,7 @@ var numberToken = regexp.MustCompile(`\d+(?:[.,]\d+)*`)
 // Figures returns the figures of text in a normalised form, in order of
 // appearance without duplicates: numbers (ASCII or full-width digits, with
 // the thousands separators removed, so "1,999" and "1999" agree) and
-// letter-first model tokens (X5, ZQ 3S, Pro-2), lower-cased with the space or
+// letter-first model tokens (K5, ZQ 3S, Pro-2), lower-cased with the space or
 // hyphen removed ("zq3s"). The digits inside a model token are part of the
 // model, not a separate number.
 func Figures(text string) []string {
