@@ -8,12 +8,20 @@
 //
 //   - the version must still be current and PARSED, and must not have
 //     candidates yet, otherwise the job is completed as skipped;
-//   - each section (in ordinal order) goes to the LLM with the versioned
+//   - a section that is a stub (only a title or boilerplate lines, see
+//     MinMeaningfulChars) is not sent; its text becomes context of the next
+//     section that is sent. Every skipped section is logged and counted;
+//   - a Q&A row (a sheet imported through a `.qa.yaml` mapping) needs no LLM:
+//     its question, alternates and answer become a candidate verbatim
+//     (qa-import-v1). Only an answer that is too long or has line breaks or
+//     Markdown gets one LLM call that shortens it (qa-condense-v1);
+//   - each other section (in ordinal order) goes to the LLM with the versioned
 //     prompt. The answer is decoded and checked against the schema in Go, and
 //     every candidate is validated by internal/candidate (length, markup,
 //     URLs, script/language). If anything failed, the model gets one retry
 //     with the problems appended; candidates that still fail are dropped with
-//     a warning (log and metric), never stored;
+//     a warning (log and metric), never stored. An answer that states a number
+//     or model name the section does not contain is invalid (UNGROUNDED_FIGURE);
 //   - questions are deduplicated across the whole version (first wins);
 //   - all candidates of the version are inserted in one transaction that
 //     re-checks the version and the sections under a lock, so a re-run never
@@ -30,12 +38,17 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/rasonyang/aicc-knowledge/internal/candidate"
 	"github.com/rasonyang/aicc-knowledge/internal/domain"
@@ -71,6 +84,17 @@ const (
 	SectionRetried = "RETRIED"
 	SectionPartial = "PARTIAL"
 	SectionEmpty   = "EMPTY"
+
+	// Sections that were not sent to the LLM, and why. Each is logged.
+	SectionSkippedStub       = "SKIPPED_STUB"
+	SectionSkippedNoLanguage = "SKIPPED_NO_LANGUAGE"
+	// SectionTruncated counts sections sent with their text cut at
+	// MaxSectionChars (in addition to their own outcome).
+	SectionTruncated = "TRUNCATED"
+	// Q&A rows.
+	SectionQAVerbatim  = "QA_VERBATIM"
+	SectionQACondensed = "QA_CONDENSED"
+	SectionQADropped   = "QA_DROPPED"
 )
 
 // Summary counts what one Run did.
@@ -85,6 +109,13 @@ type Summary struct {
 	Warnings   int // candidates dropped by validation after the retry
 	Duplicates int // candidates dropped as duplicate questions
 	LLMTime    time.Duration
+
+	SkippedStub       int // stub sections not sent (their text became context)
+	SkippedNoLanguage int // sections without letters, not sent
+	Truncated         int // sections whose text was cut at MaxSectionChars
+	QAVerbatim        int // Q&A rows imported as they are
+	QACondensed       int // Q&A rows whose answer the LLM shortened
+	QADropped         int // Q&A rows that gave no candidate (invalid)
 }
 
 // Completer is what the worker needs from the LLM client.
@@ -105,6 +136,9 @@ type Worker struct {
 	// Lease is the job lease, extended after every section; defaults to
 	// jobs.DefaultLease.
 	Lease time.Duration
+	// Only, when set, restricts Run to the GENERATE job of that file version:
+	// every other queued job is left alone.
+	Only uuid.UUID
 }
 
 type payload struct {
@@ -158,7 +192,13 @@ func (w *Worker) Run(ctx context.Context) (Summary, error) {
 		if err := ctx.Err(); err != nil {
 			return sum, err
 		}
-		job, err := queue.Claim(ctx, w.name(), w.lease(), jobs.KindGenerate)
+		var job jobs.Job
+		var err error
+		if w.Only != uuid.Nil {
+			job, err = queue.ClaimByKey(ctx, w.name(), w.lease(), jobs.KindGenerate, w.Only.String())
+		} else {
+			job, err = queue.Claim(ctx, w.name(), w.lease(), jobs.KindGenerate)
+		}
 		if errors.Is(err, jobs.ErrNoJob) {
 			return sum, nil
 		}
@@ -223,22 +263,48 @@ func (w *Worker) process(ctx context.Context, queue *jobs.Queue, job jobs.Job, s
 	if reason := notGeneratable(ver.State, ver.SupersededAt.Valid); reason != "" {
 		return skip(reason)
 	}
-	if n, err := q.CountCandidatesOfVersion(ctx, ver.ID); err != nil {
-		return 0, "", fmt.Errorf("count candidates: %w", err)
-	} else if n > 0 {
-		return skip(SkipAlreadyGenerated)
-	}
 	secs, err := q.ListParsedSections(ctx, ver.ID)
 	if err != nil {
 		return 0, "", fmt.Errorf("list sections: %w", err)
 	}
+	secs, topUp, err := w.selectSections(ctx, ver.ID, secs)
+	if err != nil {
+		return 0, "", err
+	}
+	if topUp && len(secs) == 0 {
+		return skip(SkipAlreadyGenerated)
+	}
 
 	var drafts []draft
 	seen := newQuestionSet()
+	var stubs []string // text of the stub sections since the last section that was sent
 	for _, s := range secs {
-		got, err := w.section(ctx, ver.ObjectKey, s, sum)
-		if err != nil {
-			return 0, "", err
+		var got []draft
+		switch {
+		case s.Kind == string(domain.SectionKindXlsxQARow):
+			d, err := w.qaRow(ctx, ver.ObjectKey, s, sum)
+			if err != nil {
+				return 0, "", err
+			}
+			got = d
+		default:
+			plan := classify(s)
+			if plan.stub {
+				sum.SkippedStub++
+				w.skipped(ctx, SectionSkippedStub, ver.ObjectKey, s, "no text of its own; it becomes context of the next section")
+				if plan.context != "" {
+					stubs = append(stubs, plan.context)
+				}
+				continue
+			}
+			d, err := w.section(ctx, ver.ObjectKey, s, contextOf(stubs), sum)
+			if err != nil {
+				return 0, "", err
+			}
+			if !d.skipped {
+				stubs = nil
+			}
+			got = d.drafts
 		}
 		for _, d := range got {
 			if !seen.add(d.question, d.alternates) {
@@ -254,7 +320,39 @@ func (w *Worker) process(ctx context.Context, queue *jobs.Queue, job jobs.Job, s
 			return 0, "", err
 		}
 	}
-	return w.persist(ctx, queue, job, ver.ID, drafts, sum)
+	return w.persist(ctx, queue, job, ver.ID, drafts, topUp, sum)
+}
+
+// selectSections decides which sections a job works on. A version without
+// candidates takes all of them. A version that has candidates was generated
+// before: only the Q&A rows that have no live candidate (they arrived with a
+// mapping after the first run, or their candidate went STALE because the row
+// changed) are generated, and when there are none the job is skipped.
+func (w *Worker) selectSections(ctx context.Context, versionID uuid.UUID, secs []queries.ParsedSection) (_ []queries.ParsedSection, topUp bool, _ error) {
+	n, err := w.Store.Queries.CountCandidatesOfVersion(ctx, versionID)
+	if err != nil {
+		return nil, false, fmt.Errorf("count candidates: %w", err)
+	}
+	if n == 0 {
+		return secs, false, nil
+	}
+	live, err := w.Store.Queries.ListLiveCandidateSections(ctx, versionID)
+	if err != nil {
+		return nil, false, fmt.Errorf("list candidate sections: %w", err)
+	}
+	have := map[string]bool{}
+	for _, l := range live {
+		if l.SectionOrdinal != nil {
+			have[fmt.Sprint(*l.SectionOrdinal, "\x00", l.SourceRef)] = true
+		}
+	}
+	var pending []queries.ParsedSection
+	for _, s := range secs {
+		if s.Kind == string(domain.SectionKindXlsxQARow) && !have[fmt.Sprint(s.Ordinal, "\x00", s.SourceRef)] {
+			pending = append(pending, s)
+		}
+	}
+	return pending, true, nil
 }
 
 func notGeneratable(state string, superseded bool) string {
@@ -304,6 +402,10 @@ type draft struct {
 	alternates []string
 	answer     string
 	generated  time.Time
+	// promptVersion and model say what produced the text; model is empty for a
+	// verbatim Q&A import.
+	promptVersion string
+	model         string
 }
 
 // output is the schema the model answers with.
@@ -355,30 +457,47 @@ func decodeOutput(content []byte) (*output, error) {
 	return &out, nil
 }
 
-// section runs the LLM over one section, with at most one retry, and returns
-// the valid drafts. A non-nil error is an infrastructure error.
-func (w *Worker) section(ctx context.Context, objectKey string, s queries.ParsedSection, sum *Summary) ([]draft, error) {
+// sectionResult is what section produced.
+type sectionResult struct {
+	drafts  []draft
+	skipped bool // not sent to the LLM
+}
+
+// section runs the LLM over one non-stub section, with at most one retry, and
+// returns the valid drafts. extra is the context from preceding stub sections.
+// A non-nil error is an infrastructure error.
+func (w *Worker) section(ctx context.Context, objectKey string, s queries.ParsedSection, extra string, sum *Summary) (sectionResult, error) {
 	body := strings.TrimSpace(s.Body)
-	if len([]rune(body)) < MinSectionChars {
-		return nil, nil
-	}
-	lang, ok := candidate.DetectLanguage(strings.Join(s.HeadingPath, " ") + " " + body)
+	head := strings.Join(s.HeadingPath, " ")
+	lang, ok := candidate.DetectLanguage(head + " " + body)
 	if !ok {
-		return nil, nil
+		sum.SkippedNoLanguage++
+		w.skipped(ctx, SectionSkippedNoLanguage, objectKey, s, "no letters to write a question in")
+		return sectionResult{skipped: true}, nil
+	}
+	if r := []rune(body); len(r) > MaxSectionChars {
+		body = string(r[:MaxSectionChars])
+		sum.Truncated++
+		w.log().Warn("section text truncated before it was sent to the LLM",
+			"sourceRef", s.SourceRef, "key", objectKey, "code", "SECTION_TRUNCATED", "chars", len(r), "kept", MaxSectionChars)
+		if w.Metrics != nil {
+			w.Metrics.ObserveGenerateSection(ctx, SectionTruncated)
+		}
 	}
 	sum.Sections++
-	msgs := messages(lang, w.Limits, s.HeadingPath, body)
-	good, bad, raw, err := w.attempt(ctx, msgs, lang, sum)
+	source := head + "\n" + extra + "\n" + body // what an answer may take its figures from
+	msgs := messages(lang, w.Limits, docTitle(objectKey), s.HeadingPath, extra, body)
+	good, bad, raw, err := w.attempt(ctx, msgs, lang, source, sum)
 	if err != nil {
-		return nil, err
+		return sectionResult{}, err
 	}
 	retried := false
 	if len(bad) > 0 {
 		retried = true
 		w.log().Info("section needs a retry", "sourceRef", s.SourceRef, "problems", len(bad))
-		good2, bad2, _, err := w.attempt(ctx, append(msgs, feedback(raw, bad)...), lang, sum)
+		good2, bad2, _, err := w.attempt(ctx, append(msgs, feedback(raw, bad)...), lang, source, sum)
 		if err != nil {
-			return nil, err
+			return sectionResult{}, err
 		}
 		good, bad = mergeDrafts(good, good2), bad2
 	}
@@ -404,7 +523,123 @@ func (w *Worker) section(ctx context.Context, objectKey string, s queries.Parsed
 	if w.Metrics != nil {
 		w.Metrics.ObserveGenerateSection(ctx, outcome)
 	}
-	return good, nil
+	return sectionResult{drafts: good}, nil
+}
+
+// skipped logs and counts a section that was not sent to the LLM. A skipped
+// section is never silent.
+func (w *Worker) skipped(ctx context.Context, outcome, objectKey string, s queries.ParsedSection, why string) {
+	w.log().Warn("section skipped", "outcome", outcome, "sourceRef", s.SourceRef, "key", objectKey, "why", why)
+	if w.Metrics != nil {
+		w.Metrics.ObserveGenerateSection(ctx, outcome)
+	}
+}
+
+// docTitle is the document's name for the prompt: the file name without its
+// directory and extension.
+func docTitle(objectKey string) string {
+	base := path.Base(objectKey)
+	return strings.TrimSuffix(base, path.Ext(base))
+}
+
+// plan is the verdict of classify.
+type plan struct {
+	stub bool
+	// context is the text to attach to the next section when stub is set.
+	context string
+}
+
+// classify decides whether a section carries text of its own. The test is on
+// the body without its boilerplate lines (isBoilerplate), not on the heading:
+// a section that only has a title, or a title and an "applicable products"
+// line, would make the model invent an answer from the title. The exception
+// is a heading that is itself a question (questionHeading): any body with
+// text in it is that question's answer, however short.
+func classify(s queries.ParsedSection) plan {
+	body := strings.TrimSpace(s.Body)
+	heading := ""
+	if n := len(s.HeadingPath); n > 0 {
+		heading = s.HeadingPath[n-1]
+	}
+	if questionHeading(heading) && hasText(body) {
+		return plan{}
+	}
+	if utf8.RuneCountInString(removeBoilerplate(body)) >= MinMeaningfulChars {
+		return plan{}
+	}
+	ctx := strings.Join(s.HeadingPath, " > ")
+	if body != "" {
+		if ctx != "" {
+			ctx += ": "
+		}
+		ctx += strings.Join(strings.Fields(body), " ")
+	}
+	return plan{stub: true, context: ctx}
+}
+
+var questionStart = regexp.MustCompile(`^[Qq]\s*\d`)
+
+// questionHeading reports whether a heading is a question: it ends with ？ or
+// ?, or starts with Q and a digit (Q1, Q 12).
+func questionHeading(h string) bool {
+	h = strings.TrimSpace(norm.NFKC.String(h))
+	return strings.HasSuffix(h, "?") || questionStart.MatchString(h)
+}
+
+// hasText reports whether s has at least two letters, digits or Han characters.
+func hasText(s string) bool {
+	n := 0
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			if n++; n == 2 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Boilerplate lines are the short "label: value" lines that documents put
+// under a title (applicable products, version, date): a label of at most
+// maxLabelRunes characters, a colon (ASCII or full-width), and a line of at
+// most maxBoilerplateRunes characters.
+const (
+	maxLabelRunes       = 24
+	maxBoilerplateRunes = 50
+)
+
+func isBoilerplate(line string) bool {
+	line = strings.TrimSpace(line)
+	if utf8.RuneCountInString(line) > maxBoilerplateRunes {
+		return false
+	}
+	i := strings.IndexAny(line, ":：")
+	if i < 0 {
+		return false
+	}
+	label := utf8.RuneCountInString(strings.TrimSpace(line[:i]))
+	return label >= 1 && label <= maxLabelRunes
+}
+
+// removeBoilerplate drops the boilerplate and blank lines and joins the rest.
+func removeBoilerplate(body string) string {
+	var kept []string
+	for _, line := range strings.Split(body, "\n") {
+		if line = strings.TrimSpace(line); line != "" && !isBoilerplate(line) {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
+// contextOf joins the stub texts that precede a section, newest last, and
+// keeps the last MaxContextChars characters.
+func contextOf(stubs []string) string {
+	c := strings.Join(stubs, "\n")
+	if r := []rune(c); len(r) > MaxContextChars {
+		c = string(r[len(r)-MaxContextChars:])
+	}
+	return c
 }
 
 func mergeDrafts(first, second []draft) []draft {
@@ -421,25 +656,13 @@ func mergeDrafts(first, second []draft) []draft {
 // attempt makes one request. It returns the valid drafts, the problems, and
 // the model's raw content (for the feedback turn). Content that is not valid
 // JSON of the schema is one problem with Index 0.
-func (w *Worker) attempt(ctx context.Context, msgs []llm.Message, lang domain.Language, sum *Summary) (good []draft, bad []problem, raw string, _ error) {
-	start := time.Now()
-	content, err := w.LLM.CompleteJSON(ctx, llm.Request{Messages: msgs, SchemaName: schemaName, Schema: schema}, func(b []byte) error {
+func (w *Worker) attempt(ctx context.Context, msgs []llm.Message, lang domain.Language, source string, sum *Summary) (good []draft, bad []problem, raw string, _ error) {
+	content, err := w.complete(ctx, msgs, schemaName, schema, func(b []byte) error {
 		_, err := decodeOutput(b)
 		return err
-	})
-	elapsed := time.Since(start)
-	sum.LLMTime += elapsed
-	outcome := "OK"
+	}, sum)
 	var le *llm.Error
-	if err != nil {
-		outcome = "ERROR"
-		if errors.As(err, &le) {
-			outcome = string(le.Code)
-		}
-	}
-	if w.Metrics != nil && ctx.Err() == nil {
-		w.Metrics.ObserveLLMRequest(ctx, outcome, elapsed)
-	}
+	errors.As(err, &le)
 	if errors.Is(err, llm.ErrOutputInvalid) {
 		return nil, []problem{{Violations: []candidate.Violation{{Code: string(llm.CodeOutputInvalid), Detail: le.Error()}}}}, "", nil
 	}
@@ -454,13 +677,37 @@ func (w *Worker) attempt(ctx context.Context, msgs []llm.Message, lang domain.La
 				Code: candidate.CodeLanguageMixed, Field: "language", Detail: fmt.Sprintf("the section is written in %s but the entry says %s", lang, r.Language),
 			})
 		}
+		if v, ungrounded := candidate.CheckGrounded(r.Answer, source); ungrounded {
+			r.Violations = append(r.Violations, v)
+		}
 		if !r.OK() {
 			bad = append(bad, problem{Index: i + 1, Question: r.Question, Violations: r.Violations})
 			continue
 		}
-		good = append(good, draft{language: r.Language, question: r.Question, alternates: r.AlternateQuestions, answer: r.Answer, generated: time.Now()})
+		good = append(good, draft{language: r.Language, question: r.Question, alternates: r.AlternateQuestions, answer: r.Answer,
+			generated: time.Now(), promptVersion: PromptVersion, model: w.LLM.Model()})
 	}
 	return good, bad, content, nil
+}
+
+// complete makes one LLM request, timed and counted.
+func (w *Worker) complete(ctx context.Context, msgs []llm.Message, name string, schema map[string]any, validate func([]byte) error, sum *Summary) (string, error) {
+	start := time.Now()
+	content, err := w.LLM.CompleteJSON(ctx, llm.Request{Messages: msgs, SchemaName: name, Schema: schema}, validate)
+	elapsed := time.Since(start)
+	sum.LLMTime += elapsed
+	outcome := "OK"
+	var le *llm.Error
+	if err != nil {
+		outcome = "ERROR"
+		if errors.As(err, &le) {
+			outcome = string(le.Code)
+		}
+	}
+	if w.Metrics != nil && ctx.Err() == nil {
+		w.Metrics.ObserveLLMRequest(ctx, outcome, elapsed)
+	}
+	return content, err
 }
 
 type skipError struct{ reason string }
@@ -468,7 +715,7 @@ type skipError struct{ reason string }
 func (e *skipError) Error() string { return "skipped: " + e.reason }
 
 // persist stores the drafts of a version in one transaction.
-func (w *Worker) persist(ctx context.Context, queue *jobs.Queue, job jobs.Job, versionID uuid.UUID, drafts []draft, sum *Summary) (int, string, error) {
+func (w *Worker) persist(ctx context.Context, queue *jobs.Queue, job jobs.Job, versionID uuid.UUID, drafts []draft, topUp bool, sum *Summary) (int, string, error) {
 	stored := 0
 	err := pgx.BeginFunc(ctx, w.Store.Pool, func(tx pgx.Tx) error {
 		stored = 0
@@ -482,7 +729,7 @@ func (w *Worker) persist(ctx context.Context, queue *jobs.Queue, job jobs.Job, v
 		}
 		if n, err := q.CountCandidatesOfVersion(ctx, versionID); err != nil {
 			return fmt.Errorf("count candidates: %w", err)
-		} else if n > 0 {
+		} else if n > 0 && !topUp {
 			return &skipError{SkipAlreadyGenerated}
 		}
 		secs, err := q.ListParsedSections(ctx, versionID)
@@ -507,7 +754,7 @@ func (w *Worker) persist(ctx context.Context, queue *jobs.Queue, job jobs.Job, v
 				FileVersionID: versionID, SectionOrdinal: ptr(int32(d.ordinal)), Language: string(d.language), Question: d.question,
 				AlternateQuestions: d.alternates, Answer: d.answer, SourceRef: d.sourceRef,
 				Flags: candidate.Flags(d.question, d.alternates, d.answer), ContentHash: hash[:],
-				PromptVersion: PromptVersion, Model: w.LLM.Model(), GeneratedAt: tsz(d.generated),
+				PromptVersion: d.promptVersion, Model: d.model, GeneratedAt: tsz(d.generated),
 			})
 			if err != nil {
 				return fmt.Errorf("insert candidate: %w", err)

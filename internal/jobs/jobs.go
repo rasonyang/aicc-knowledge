@@ -200,6 +200,28 @@ func (qu *Queue) Claim(ctx context.Context, worker string, lease time.Duration, 
 	return Job{ID: row.ID, Kind: Kind(row.Kind), Payload: row.Payload, Attempts: int(row.Attempts), MaxAttempts: int(row.MaxAttempts)}, nil
 }
 
+// ClaimByKey is Claim for the single job of one kind and dedupe key. It
+// returns ErrNoJob when that job is not claimable (absent, running, finished
+// or backing off); every other queued job is left alone.
+func (qu *Queue) ClaimByKey(ctx context.Context, worker string, lease time.Duration, kind Kind, dedupeKey string) (Job, error) {
+	if !kind.Valid() {
+		return Job{}, &Error{Code: CodeUnknownJobKind, Msg: fmt.Sprintf("kind %q is not registered", kind)}
+	}
+	if _, err := qu.Reclaim(ctx); err != nil {
+		return Job{}, err
+	}
+	row, err := qu.q.ClaimJobByDedupeKey(ctx, queries.ClaimJobByDedupeKeyParams{
+		Worker: worker, LeaseSeconds: lease.Seconds(), Kind: string(kind), DedupeKey: dedupeKey,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Job{}, ErrNoJob
+	}
+	if err != nil {
+		return Job{}, fmt.Errorf("claim job: %w", err)
+	}
+	return Job{ID: row.ID, Kind: Kind(row.Kind), Payload: row.Payload, Attempts: int(row.Attempts), MaxAttempts: int(row.MaxAttempts)}, nil
+}
+
 // Complete marks a claimed job SUCCEEDED. It fails with ErrLeaseLost when the
 // worker no longer holds the job.
 func (qu *Queue) Complete(ctx context.Context, id uuid.UUID, worker string) error {

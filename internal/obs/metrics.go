@@ -115,7 +115,7 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 	if m.genCandidates, err = meter.Int64Counter(MetricGenerateCandidates, metric.WithDescription("Candidates the LLM produced, by language and outcome (CREATED, DROPPED_INVALID, DROPPED_DUPLICATE).")); err != nil {
 		return nil, err
 	}
-	if m.genSections, err = meter.Int64Counter(MetricGenerateSections, metric.WithDescription("Sections sent to the LLM, by outcome (OK, RETRIED, PARTIAL, EMPTY, ERROR).")); err != nil {
+	if m.genSections, err = meter.Int64Counter(MetricGenerateSections, metric.WithDescription("Sections handled by generate, by outcome (OK, RETRIED, PARTIAL, EMPTY, ERROR for sections sent to the LLM; SKIPPED_STUB, SKIPPED_NO_LANGUAGE for sections not sent; TRUNCATED for sections sent with cut text; QA_VERBATIM, QA_CONDENSED, QA_DROPPED for Q&A rows).")); err != nil {
 		return nil, err
 	}
 	if m.llmSeconds, err = meter.Float64Histogram(MetricLLMRequestSeconds, metric.WithUnit("s"), metric.WithDescription("Duration of one LLM completion including retries, by outcome (OK, ERROR code)."),
@@ -164,7 +164,10 @@ func (m *Metrics) ObserveGenerateCandidates(ctx context.Context, language, outco
 
 // ObserveGenerateSection counts one section handled by generate. Outcomes: OK,
 // RETRIED (valid after a retry with feedback), PARTIAL (some candidates were
-// dropped: a warning), EMPTY (no valid candidate), ERROR.
+// dropped: a warning), EMPTY (no valid candidate), ERROR; SKIPPED_STUB and
+// SKIPPED_NO_LANGUAGE (not sent to the LLM, never silent); TRUNCATED (the text
+// was cut at the section limit, counted in addition to the outcome);
+// QA_VERBATIM, QA_CONDENSED and QA_DROPPED for rows of a Q&A sheet.
 func (m *Metrics) ObserveGenerateSection(ctx context.Context, outcome string) {
 	m.genSections.Add(ctx, 1, metric.WithAttributes(attribute.String(LabelOutcome, outcome)))
 }

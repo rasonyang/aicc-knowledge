@@ -137,6 +137,54 @@ func headings() []byte {
 	return build(styles, body)
 }
 
+// sentenceHeadings is a document in the shape word processors export when
+// whole intro and closing sentences carry an outline level, and the title is
+// repeated as a lower-level heading.
+func sentenceHeadings() []byte {
+	styles := style("Normal", "Normal", "", "", true) +
+		style("T1", "Title", "Normal", "0", false) +
+		style("T2", "Sub", "Normal", "1", false) +
+		style("T3", "Deep", "Normal", "2", false)
+	body := p("T1", r("Acme Widget Guide")) +
+		p("T3", r("Acme Widget Guide")) +
+		p("T1", r("Welcome to the Acme Widget Guide. Please read the sections below before use.")) +
+		p("T2", r("Setup")) +
+		p("Normal", r("Plug the widget in and press the green button.")) +
+		p("T3", r("这是一段很长的介绍文字，它被错误地设置了大纲级别，所以应该被当作正文处理而不是标题，因为它超过了四十个字符的上限")) +
+		p("T2", r("如何清洁屏幕？")) +
+		p("Normal", r("每周清洁一次即可。")) +
+		p("T2", r("Does it work offline?")) +
+		p("Normal", r("Yes.")) +
+		p("T1", r("谢谢您的阅读！")) +
+		p("T2", r("Version 2.0")) +
+		p("Normal", r("Released last year."))
+	return build(styles, body)
+}
+
+// stubs is a product FAQ in the shape that made the model invent facts: titles
+// with no text, boilerplate lines under a title, and short question headings.
+func stubs() []byte {
+	styles := style("Normal", "Normal", "", "", true) +
+		style("T1", "Title", "Normal", "0", false) +
+		style("T2", "Sub", "Normal", "1", false)
+	body := p("T1", r("Gadget Guide")) +
+		p("Normal", r("Applicable products: Gadget One, Gadget Two")) +
+		p("T2", r("Battery")) +
+		p("Normal", r("The battery lasts about ten hours on a single charge when the screen brightness is at the default level.")) +
+		p("T2", r("Does it support wireless charging?")) +
+		p("Normal", r("No.")) +
+		p("T2", r("Warranty")) +
+		p("T2", r("Water resistance")) +
+		p("Normal", r("The Gadget One has an IP67 rating, so it survives a short dip in fresh water.")) +
+		p("T2", r("Q3 Colors")) +
+		p("Normal", r("Black.")) +
+		p("T2", r("是否支持无线充电？")) +
+		p("Normal", r("不支持。")) +
+		p("T2", r("Release notes")) +
+		p("Normal", r("Version: 2.1"))
+	return build(styles, body)
+}
+
 func tracked() []byte {
 	styles := style("Normal", "Normal", "", "", true) + style("H1", "标题 1", "Normal", "0", false)
 	ins := func(t string) string {
@@ -231,12 +279,14 @@ func faqZH() []byte {
 
 func main() {
 	files := map[string][]byte{
-		"headings.docx": headings(),
-		"tracked.docx":  tracked(),
-		"inline.docx":   inline(),
-		"tables.docx":   tables(),
-		"faq_en.docx":   faqEN(),
-		"faq_zh.docx":   faqZH(),
+		"headings.docx":  headings(),
+		"tracked.docx":   tracked(),
+		"sentences.docx": sentenceHeadings(),
+		"stubs.docx":     stubs(),
+		"inline.docx":    inline(),
+		"tables.docx":    tables(),
+		"faq_en.docx":    faqEN(),
+		"faq_zh.docx":    faqZH(),
 	}
 	for name, data := range files {
 		must(os.WriteFile(filepath.Join("testdata", name), data, 0o644))

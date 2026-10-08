@@ -42,6 +42,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -66,8 +67,16 @@ import (
 // (their own constants); these are the ones this package adds. The facts
 // package adds FACT_TABLE_NAME_CONFLICT.
 const (
-	CodeFactsInvalid   = "FACTS_INVALID"
-	CodeObjectTooLarge = scan.ParseErrorObjectTooLarge
+	CodeFactsInvalid = "FACTS_INVALID"
+	// CodeQAInvalid: the Q&A mapping does not fit the workbook (sheet or
+	// header not found). Like FACTS_INVALID it is the workbook's failure.
+	CodeQAInvalid = "QA_INVALID"
+	// CodeQASheetConflict: one sheet is claimed by a facts mapping and by a
+	// Q&A mapping.
+	CodeQASheetConflict = "QA_SHEET_CONFLICT"
+	CodeObjectTooLarge  = scan.ParseErrorObjectTooLarge
+	// CodeQALanguageUnknown is a row-level warning, not a failure.
+	CodeQALanguageUnknown = "QA_LANGUAGE_UNKNOWN"
 )
 
 // Job failure codes (jobs.last_error_code): an infrastructure problem, the
@@ -83,6 +92,7 @@ const (
 	KindDocx    = "DOCX"
 	KindXlsx    = "XLSX"
 	KindMapping = "FACTS_MAPPING"
+	KindQA      = "QA_MAPPING"
 
 	OutcomeParsed  = "PARSED"
 	OutcomeFailed  = "PARSE_FAILED"
@@ -261,6 +271,8 @@ func kindOf(f scan.Format) string {
 		return KindXlsx
 	case scan.FormatFacts:
 		return KindMapping
+	case scan.FormatQA:
+		return KindQA
 	}
 	return "UNKNOWN"
 }
@@ -317,6 +329,8 @@ func (w *Worker) attempt(ctx context.Context, queue *jobs.Queue, job jobs.Job, i
 		return w.parseDocx(ctx, job, t, data)
 	case scan.FormatXlsx:
 		return w.parseWorkbook(ctx, job, t, data)
+	case scan.FormatQA:
+		return w.parseQAMapping(ctx, job, t, data)
 	default:
 		return w.parseMapping(ctx, job, t, data)
 	}
@@ -359,6 +373,10 @@ type section struct {
 	level       int
 	body        string
 	sourceRef   string
+	// The Q&A row fields; empty for every other kind.
+	question   string
+	alternates []string
+	language   string
 }
 
 func (w *Worker) parseDocx(ctx context.Context, job jobs.Job, t target, data []byte) (string, string, error) {
@@ -531,6 +549,10 @@ func encodeWarnings(warns []Warning) ([]byte, error) {
 }
 
 func (w *Worker) writeSections(ctx context.Context, q *queries.Queries, id uuid.UUID, secs []section) error {
+	old, err := q.ListParsedSections(ctx, id)
+	if err != nil {
+		return fmt.Errorf("list old sections: %w", err)
+	}
 	if _, err := q.DeleteParsedSections(ctx, id); err != nil {
 		return fmt.Errorf("delete old sections: %w", err)
 	}
@@ -540,10 +562,16 @@ func (w *Worker) writeSections(ctx context.Context, q *queries.Queries, id uuid.
 		if hp == nil {
 			hp = []string{}
 		}
-		rows = append(rows, queries.InsertParsedSectionsParams{
+		p := queries.InsertParsedSectionsParams{
 			FileVersionID: id, Ordinal: int32(s.ordinal), Kind: string(s.kind), HeadingPath: hp,
-			Level: int32(s.level), Body: s.body, SourceRef: s.sourceRef,
-		})
+			Level: int32(s.level), Body: s.body, SourceRef: s.sourceRef, QaAlternates: []string{},
+		}
+		if s.kind == domain.SectionKindXlsxQARow {
+			q, lang := s.question, s.language
+			p.QaQuestion, p.QaLanguage = &q, &lang
+			p.QaAlternates = append([]string{}, s.alternates...)
+		}
+		rows = append(rows, p)
 	}
 	if n, err := q.InsertParsedSections(ctx, rows); err != nil || n != int64(len(rows)) {
 		return fmt.Errorf("insert sections: inserted %d of %d: %v", n, len(rows), err)
@@ -558,7 +586,45 @@ func (w *Worker) writeSections(ctx context.Context, q *queries.Queries, id uuid.
 	if n > 0 {
 		w.log().Info("candidates became STALE: their section was withdrawn", "fileVersionId", id, "candidates", n, "reason", "SECTION_WITHDRAWN")
 	}
+	return w.staleChangedQARows(ctx, q, id, old, secs)
+}
+
+// staleChangedQARows marks STALE the candidates of a Q&A row whose question,
+// alternates, answer or language changed while its (ordinal, source_ref)
+// stayed: the mapping or the sheet was edited, and the candidate no longer
+// says what its source says. A row that vanished is handled by the withdrawn
+// sections rule.
+func (w *Worker) staleChangedQARows(ctx context.Context, q *queries.Queries, id uuid.UUID, old []queries.ParsedSection, secs []section) error {
+	next := map[[2]string]section{}
+	for _, s := range secs {
+		if s.kind == domain.SectionKindXlsxQARow {
+			next[[2]string{fmt.Sprint(s.ordinal), s.sourceRef}] = s
+		}
+	}
+	for _, o := range old {
+		if o.Kind != string(domain.SectionKindXlsxQARow) {
+			continue
+		}
+		s, ok := next[[2]string{fmt.Sprint(o.Ordinal), o.SourceRef}]
+		if !ok || (o.Body == s.body && deref(o.QaQuestion) == s.question && slices.Equal(o.QaAlternates, s.alternates) && deref(o.QaLanguage) == s.language) {
+			continue
+		}
+		n, err := q.MarkQACandidatesOfRowStale(ctx, queries.MarkQACandidatesOfRowStaleParams{FileVersionID: id, SectionOrdinal: &o.Ordinal, SourceRef: o.SourceRef})
+		if err != nil {
+			return fmt.Errorf("mark candidates of a changed Q&A row stale: %w", err)
+		}
+		if n > 0 {
+			w.log().Info("candidates became STALE: their Q&A row changed", "fileVersionId", id, "sourceRef", o.SourceRef, "candidates", n, "reason", "QA_ROW_CHANGED")
+		}
+	}
 	return nil
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // RetryFailed is the operator retry: every current PARSE_FAILED version goes
@@ -612,4 +678,13 @@ func mappingKeyOf(workbookKey string) string {
 
 func workbookKeyOf(mappingKey string) string {
 	return mappingKey[:len(mappingKey)-len(".facts.yaml")] + ".xlsx"
+}
+
+// qaKeyOf and workbookKeyOfQA do the same for the Q&A mapping.
+func qaKeyOf(workbookKey string) string {
+	return workbookKey[:len(workbookKey)-len(".xlsx")] + ".qa.yaml"
+}
+
+func workbookKeyOfQA(qaKey string) string {
+	return qaKey[:len(qaKey)-len(".qa.yaml")] + ".xlsx"
 }

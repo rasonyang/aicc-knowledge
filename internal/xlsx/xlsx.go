@@ -52,6 +52,7 @@ const (
 	CodeHiddenRowSkipped     = "HIDDEN_ROW_SKIPPED"
 	CodeSheetHiddenSkipped   = "SHEET_HIDDEN_SKIPPED"
 	CodeSheetUnreadable      = "SHEET_UNREADABLE"
+	CodeSectionTruncated     = "SECTION_TRUNCATED"
 
 	CodeSheetNotFound        = "SHEET_NOT_FOUND"
 	CodeSheetHidden          = "SHEET_HIDDEN"

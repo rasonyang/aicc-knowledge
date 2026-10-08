@@ -36,6 +36,36 @@ func TestContainsFiguresTable(t *testing.T) {
 	}
 }
 
+func TestContainsFiguresModelNames(t *testing.T) {
+	cases := []struct {
+		text string
+		want bool
+	}{
+		{"ZQ 3 售价 1999 元", true},
+		{"ZQ 3S 支持外接显示器吗", false},
+		{"支持 4K 录制", true},
+		{"X5 支持防水吗", false},
+		{"A2 和 ZQ 3 有什么区别", false},
+		{"Does the ZQ 3S support an external display?", false},
+		{"Does the Pro-2 fit?", false},
+		{"60fps 录制", true},
+		{"128GB 版本", true},
+		{"售价 1999元", true},
+		{"The X5 costs 300 dollars", true},
+		{"It takes 30 days.", true},
+		{"Open 24 hours", true},
+		{"Step 3 is next", true},
+		{"版本 X5 与 X6 都有", false},
+		{"X5 supports 4K", true},
+		{"ZQ 3S 有 2 个颜色", true},
+	}
+	for _, c := range cases {
+		if got := ContainsFigures(c.text); got != c.want {
+			t.Errorf("ContainsFigures(%q) = %v, want %v", c.text, got, c.want)
+		}
+	}
+}
+
 func TestFlagsCoverQuestionAlternatesAndAnswer(t *testing.T) {
 	if got := Flags("How do I reset it?", []string{"Reset steps?"}, "Open settings."); len(got) != 0 || got == nil {
 		t.Errorf("no figures: %v", got)
@@ -124,6 +154,15 @@ func TestDetectLanguage(t *testing.T) {
 		{"Our Basic plan (基础版) costs less.", domain.LanguageEN, true},
 		{"2024 - 59", "", false},
 		{"", "", false},
+		// Chinese text with many Latin product names is still Chinese.
+		{"ZQ 3S 的 SteadyMode 防抖支持 4K 吗", domain.LanguageZH, true},
+		{"Alpha Pro Max 和 Beta Lite 都支持 WiFi 与 Bluetooth 连接吗", domain.LanguageZH, true},
+		{"支持 USB-C Gen2 SuperSpeed Plus 快充 吗", domain.LanguageZH, true},
+		{"是的，Model X1 Ultra 支持 WiFi6", domain.LanguageZH, true},
+		// True English stays English, even with a little Chinese.
+		{"The Alpha Pro supports 4K video and SteadyMode stabilisation.", domain.LanguageEN, true},
+		{"Our Basic plan (基础版) costs less than the Premium plan and includes support.", domain.LanguageEN, true},
+		{"Yes, the Beta Lite works with the 无 sticker only.", domain.LanguageEN, true},
 	}
 	for _, c := range cases {
 		got, ok := DetectLanguage(c.text)

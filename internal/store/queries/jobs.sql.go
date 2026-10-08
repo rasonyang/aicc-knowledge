@@ -57,6 +57,57 @@ func (q *Queries) ClaimJob(ctx context.Context, arg ClaimJobParams) (Job, error)
 	return i, err
 }
 
+const claimJobByDedupeKey = `-- name: ClaimJobByDedupeKey :one
+UPDATE jobs
+SET state = 'RUNNING',
+    attempts = attempts + 1,
+    locked_by = $1::text,
+    locked_until = now() + make_interval(secs => $2::float8)
+WHERE id = (
+    SELECT j.id FROM jobs j
+    WHERE j.state = 'QUEUED' AND j.run_after <= now() AND j.kind = $3::text AND j.dedupe_key = $4::text
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING id, kind, payload, state, attempts, max_attempts, run_after, locked_until, locked_by, last_error_code, last_error_message, created_at, finished_at, dedupe_key
+`
+
+type ClaimJobByDedupeKeyParams struct {
+	Worker       string  `json:"worker"`
+	LeaseSeconds float64 `json:"leaseSeconds"`
+	Kind         string  `json:"kind"`
+	DedupeKey    string  `json:"dedupeKey"`
+}
+
+// Claims the one job of (kind, dedupe_key) when it is claimable; the operator's
+// `generate --version` uses it to work on a single file version.
+func (q *Queries) ClaimJobByDedupeKey(ctx context.Context, arg ClaimJobByDedupeKeyParams) (Job, error) {
+	row := q.db.QueryRow(ctx, claimJobByDedupeKey,
+		arg.Worker,
+		arg.LeaseSeconds,
+		arg.Kind,
+		arg.DedupeKey,
+	)
+	var i Job
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Payload,
+		&i.State,
+		&i.Attempts,
+		&i.MaxAttempts,
+		&i.RunAfter,
+		&i.LockedUntil,
+		&i.LockedBy,
+		&i.LastErrorCode,
+		&i.LastErrorMessage,
+		&i.CreatedAt,
+		&i.FinishedAt,
+		&i.DedupeKey,
+	)
+	return i, err
+}
+
 const completeJob = `-- name: CompleteJob :execrows
 UPDATE jobs
 SET state = 'SUCCEEDED', finished_at = now(), locked_until = NULL, locked_by = NULL

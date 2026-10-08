@@ -34,6 +34,22 @@ WHERE id = (
 )
 RETURNING *;
 
+-- name: ClaimJobByDedupeKey :one
+-- Claims the one job of (kind, dedupe_key) when it is claimable; the operator's
+-- `generate --version` uses it to work on a single file version.
+UPDATE jobs
+SET state = 'RUNNING',
+    attempts = attempts + 1,
+    locked_by = sqlc.arg(worker)::text,
+    locked_until = now() + make_interval(secs => sqlc.arg(lease_seconds)::float8)
+WHERE id = (
+    SELECT j.id FROM jobs j
+    WHERE j.state = 'QUEUED' AND j.run_after <= now() AND j.kind = sqlc.arg(kind)::text AND j.dedupe_key = sqlc.arg(dedupe_key)::text
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING *;
+
 -- name: CompleteJob :execrows
 UPDATE jobs
 SET state = 'SUCCEEDED', finished_at = now(), locked_until = NULL, locked_by = NULL

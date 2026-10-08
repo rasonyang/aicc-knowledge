@@ -75,6 +75,9 @@ func (r iteratorForInsertParsedSections) Values() ([]interface{}, error) {
 		r.rows[0].Level,
 		r.rows[0].Body,
 		r.rows[0].SourceRef,
+		r.rows[0].QaQuestion,
+		r.rows[0].QaAlternates,
+		r.rows[0].QaLanguage,
 	}, nil
 }
 
@@ -83,5 +86,5 @@ func (r iteratorForInsertParsedSections) Err() error {
 }
 
 func (q *Queries) InsertParsedSections(ctx context.Context, arg []InsertParsedSectionsParams) (int64, error) {
-	return q.db.CopyFrom(ctx, []string{"parsed_sections"}, []string{"file_version_id", "ordinal", "kind", "heading_path", "level", "body", "source_ref"}, &iteratorForInsertParsedSections{rows: arg})
+	return q.db.CopyFrom(ctx, []string{"parsed_sections"}, []string{"file_version_id", "ordinal", "kind", "heading_path", "level", "body", "source_ref", "qa_question", "qa_alternates", "qa_language"}, &iteratorForInsertParsedSections{rows: arg})
 }

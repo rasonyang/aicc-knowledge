@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/rasonyang/aicc-knowledge/internal/candidate"
 	"github.com/rasonyang/aicc-knowledge/internal/domain"
 	"github.com/rasonyang/aicc-knowledge/internal/facts"
 	"github.com/rasonyang/aicc-knowledge/internal/jobs"
@@ -24,8 +25,30 @@ type analysis struct {
 	// tables holds the imported tables; empty when there is no mapping or
 	// when issues is not.
 	tables []facts.TableImport
-	// issues are the import problems; any issue means FACTS_INVALID.
+	// issues are the facts import problems; any issue means FACTS_INVALID.
 	issues []Warning
+	// qaIssues are the Q&A import problems (QA_INVALID); conflicts name sheets
+	// claimed by both a facts and a Q&A mapping (QA_SHEET_CONFLICT).
+	qaIssues  []Warning
+	conflicts []Warning
+}
+
+// failure returns the code and details of the problems that stop a workbook
+// from being parsed under its mappings, or "" when there are none.
+func (a *analysis) failure() (string, []Warning) {
+	var code string
+	var details []Warning
+	switch {
+	case len(a.conflicts) > 0:
+		code, details = CodeQASheetConflict, a.conflicts
+	case len(a.issues) > 0:
+		code, details = CodeFactsInvalid, a.issues
+	case len(a.qaIssues) > 0:
+		code, details = CodeQAInvalid, a.qaIssues
+	default:
+		return "", nil
+	}
+	return code, append(append([]Warning{}, details...), a.warnings...)
 }
 
 func addWarning(list *[]Warning, seen map[string]bool, w Warning) {
@@ -37,19 +60,30 @@ func addWarning(list *[]Warning, seen map[string]bool, w Warning) {
 	*list = append(*list, w)
 }
 
-// analyzeWorkbook extracts the content sections of the sheets no table covers
-// and, when there is a mapping, imports every mapped table. A non-nil error is
-// a file-level failure (*xlsx.Error).
-func analyzeWorkbook(data []byte, objectKey string, mf *xlsx.MappingFile) (*analysis, error) {
+// analyzeWorkbook extracts the content sections of the sheets no mapping
+// covers, one section per row of the sheets a Q&A mapping covers, and imports
+// every table of a facts mapping. Either mapping may be nil. A non-nil error
+// is a file-level failure (*xlsx.Error).
+func analyzeWorkbook(data []byte, objectKey string, mf *xlsx.MappingFile, qf *xlsx.QAMappingFile) (*analysis, error) {
+	an := &analysis{warnings: []Warning{}}
+	if shared := xlsx.SharedSheets(qf, mf); len(shared) > 0 {
+		for _, sheet := range shared {
+			an.conflicts = append(an.conflicts, Warning{
+				Code: CodeQASheetConflict, Location: sheet,
+				Detail: fmt.Sprintf("sheet %q is claimed by both a facts mapping and a Q&A mapping", sheet),
+			})
+		}
+		return an, nil
+	}
 	var opts xlsx.ExtractOptions
 	if mf != nil {
-		opts.ExcludeSheets = mf.Sheets()
+		opts.ExcludeSheets = append(opts.ExcludeSheets, mf.Sheets()...)
 	}
+	opts.ExcludeSheets = append(opts.ExcludeSheets, qf.SheetNames()...)
 	content, err := xlsx.ExtractBytes(data, opts)
 	if err != nil {
 		return nil, err
 	}
-	an := &analysis{warnings: []Warning{}}
 	seen := map[string]bool{}
 	for _, s := range content.Sections {
 		an.sections = append(an.sections, section{
@@ -59,6 +93,9 @@ func analyzeWorkbook(data []byte, objectKey string, mf *xlsx.MappingFile) (*anal
 	}
 	for _, x := range content.Warnings {
 		addWarning(&an.warnings, seen, Warning{Code: x.Code, Detail: x.Detail, Location: x.Location})
+	}
+	if err := addQARows(an, data, objectKey, qf, seen); err != nil {
+		return nil, err
 	}
 	if mf == nil {
 		return an, nil
@@ -89,6 +126,47 @@ func analyzeWorkbook(data []byte, objectKey string, mf *xlsx.MappingFile) (*anal
 		an.tables = tables
 	}
 	return an, nil
+}
+
+// addQARows imports the Q&A sheets. Their sections come after the content
+// sections, so the ordinals of the content sections do not depend on them.
+func addQARows(an *analysis, data []byte, objectKey string, qf *xlsx.QAMappingFile, seen map[string]bool) error {
+	if qf == nil {
+		return nil
+	}
+	res, err := xlsx.ImportQABytes(data, qf)
+	if err != nil {
+		return err
+	}
+	for _, x := range res.Warnings {
+		addWarning(&an.warnings, seen, Warning{Code: x.Code, Detail: x.Detail, Location: x.Location})
+	}
+	for _, i := range res.Issues {
+		detail := i.Detail
+		if i.Column != "" {
+			detail = fmt.Sprintf("Q&A %s: %s", i.Column, i.Detail)
+		}
+		an.qaIssues = append(an.qaIssues, Warning{Code: i.Code, Detail: detail, Location: i.Location})
+	}
+	ordinal := len(an.sections)
+	for _, r := range res.Rows {
+		lang := r.Language
+		if lang == xlsx.QALanguageAuto {
+			d, ok := candidate.DetectLanguage(r.Question + " " + r.Answer)
+			if !ok {
+				addWarning(&an.warnings, seen, Warning{Code: CodeQALanguageUnknown, Detail: fmt.Sprintf("row %d has no letters to detect a language from and is skipped", r.Row), Location: r.Sheet + "!A" + fmt.Sprint(r.Row)})
+				continue
+			}
+			lang = string(d)
+		}
+		ordinal++
+		an.sections = append(an.sections, section{
+			ordinal: ordinal, kind: domain.SectionKindXlsxQARow, headingPath: []string{r.Sheet}, level: 1,
+			body: r.Answer, sourceRef: objectKey + "#" + r.SourceRef,
+			question: r.Question, alternates: r.Alternates, language: lang,
+		})
+	}
+	return nil
 }
 
 // counterpart is the current version of the sibling file of a workbook or
@@ -136,29 +214,86 @@ func (w *Worker) lockCounterpart(ctx context.Context, q *queries.Queries, bucket
 	return counterpart{Valid: true, ID: row.ID, SourceFileID: row.SourceFileID, State: locked.State, SHA: row.SHA256}, nil
 }
 
+// factsSibling returns the facts mapping next to the workbook when its
+// current version is PARSED, with the snapshot it was read under. A mapping
+// that no longer parses, or whose object changed after its scan, counts as
+// absent.
+func (w *Worker) factsSibling(ctx context.Context, bucket, wkey string) (*xlsx.MappingFile, counterpart, error) {
+	key := mappingKeyOf(wkey)
+	snap, err := w.peek(ctx, bucket, key)
+	if err != nil {
+		return nil, snap, err
+	}
+	if !snap.Valid || snap.State != string(domain.FileVersionParsed) {
+		return nil, snap, nil
+	}
+	data, reason, err := w.fetch(ctx, key, snap.SHA)
+	if err != nil {
+		return nil, snap, err
+	}
+	if reason != "" {
+		w.log().Warn("mapping object changed after its scan; importing without it", "key", key, "reason", reason)
+		return nil, snap, nil
+	}
+	mf, err := xlsx.ParseMappingFile(data)
+	if err != nil {
+		w.log().Error("a PARSED mapping no longer parses; importing without it", "key", key, "error", err)
+		return nil, snap, nil
+	}
+	return mf, snap, nil
+}
+
+// qaSibling is factsSibling for the Q&A mapping.
+func (w *Worker) qaSibling(ctx context.Context, bucket, wkey string) (*xlsx.QAMappingFile, counterpart, error) {
+	key := qaKeyOf(wkey)
+	snap, err := w.peek(ctx, bucket, key)
+	if err != nil {
+		return nil, snap, err
+	}
+	if !snap.Valid || snap.State != string(domain.FileVersionParsed) {
+		return nil, snap, nil
+	}
+	data, reason, err := w.fetch(ctx, key, snap.SHA)
+	if err != nil {
+		return nil, snap, err
+	}
+	if reason != "" {
+		w.log().Warn("Q&A mapping object changed after its scan; importing without it", "key", key, "reason", reason)
+		return nil, snap, nil
+	}
+	qf, err := xlsx.ParseQAMappingFile(data)
+	if err != nil {
+		w.log().Error("a PARSED Q&A mapping no longer parses; importing without it", "key", key, "error", err)
+		return nil, snap, nil
+	}
+	return qf, snap, nil
+}
+
+// checkCounterpart locks the counterpart's current version and reports errStale
+// when it is not the one that was read.
+func (w *Worker) checkCounterpart(ctx context.Context, q *queries.Queries, bucket, key string, snap counterpart) (counterpart, error) {
+	cp, err := w.lockCounterpart(ctx, q, bucket, key)
+	if err != nil {
+		return cp, err
+	}
+	if !cp.same(snap) {
+		return cp, errStale
+	}
+	return cp, nil
+}
+
 func (w *Worker) parseWorkbook(ctx context.Context, job jobs.Job, t target, data []byte) (string, string, error) {
-	bucket, mkey := t.ver.Bucket, mappingKeyOf(t.ver.ObjectKey)
-	snap, err := w.peek(ctx, bucket, mkey)
+	bucket, mkey, qkey := t.ver.Bucket, mappingKeyOf(t.ver.ObjectKey), qaKeyOf(t.ver.ObjectKey)
+	mf, snap, err := w.factsSibling(ctx, bucket, t.ver.ObjectKey)
 	if err != nil {
 		return t.kind, "", err
 	}
-	var mf *xlsx.MappingFile
-	if snap.Valid && snap.State == string(domain.FileVersionParsed) {
-		mdata, reason, err := w.fetch(ctx, mkey, snap.SHA)
-		if err != nil {
-			return t.kind, "", err
-		}
-		if reason == "" {
-			if mf, err = xlsx.ParseMappingFile(mdata); err != nil {
-				w.log().Error("a PARSED mapping no longer parses; importing without it", "key", mkey, "error", err)
-				mf = nil
-			}
-		} else {
-			w.log().Warn("mapping object changed after its scan; importing without it", "key", mkey, "reason", reason)
-		}
+	qf, qsnap, err := w.qaSibling(ctx, bucket, t.ver.ObjectKey)
+	if err != nil {
+		return t.kind, "", err
 	}
 
-	an, err := analyzeWorkbook(data, t.ver.ObjectKey, mf)
+	an, err := analyzeWorkbook(data, t.ver.ObjectKey, mf, qf)
 	if err != nil {
 		code := xlsx.CodeOf(err)
 		if code == "" {
@@ -166,16 +301,16 @@ func (w *Worker) parseWorkbook(ctx context.Context, job jobs.Job, t target, data
 		}
 		return w.fail(ctx, job, t, code, []Warning{{Code: code, Detail: err.Error()}})
 	}
-	if len(an.issues) > 0 {
-		return w.fail(ctx, job, t, CodeFactsInvalid, append(an.issues, an.warnings...))
+	if code, details := an.failure(); code != "" {
+		return w.fail(ctx, job, t, code, details)
 	}
 	return w.succeed(ctx, job, t, an.sections, an.warnings, func(q *queries.Queries, tx pgx.Tx) error {
-		cp, err := w.lockCounterpart(ctx, q, bucket, mkey)
+		cp, err := w.checkCounterpart(ctx, q, bucket, mkey, snap)
 		if err != nil {
 			return err
 		}
-		if !cp.same(snap) {
-			return errStale
+		if _, err := w.checkCounterpart(ctx, q, bucket, qkey, qsnap); err != nil {
+			return err
 		}
 		if mf == nil {
 			return nil
@@ -219,25 +354,32 @@ func (w *Worker) parseMapping(ctx context.Context, job jobs.Job, t target, data 
 		return t.kind, "", fmt.Errorf("load source file %s: %w", wkey, err)
 	}
 
+	qf, qsnap, err := w.qaSibling(ctx, bucket, wkey)
+	if err != nil {
+		return t.kind, "", err
+	}
+
 	var an *analysis
 	var issues []Warning // workbook-side import problems; the mapping still parses
+	issueCode := CodeFactsInvalid
 	if snap.Valid && snap.State == string(domain.FileVersionParsed) {
 		wdata, reason, err := w.fetch(ctx, wkey, snap.SHA)
 		if err != nil {
 			return t.kind, "", err
 		}
 		if reason == "" {
-			if an, err = analyzeWorkbook(wdata, wkey, mf); err != nil {
+			if an, err = analyzeWorkbook(wdata, wkey, mf, qf); err != nil {
 				return t.kind, "", fmt.Errorf("re-read workbook %s: %w", wkey, err)
 			}
-			if len(an.issues) > 0 {
+			if code, details := an.failure(); code != "" {
+				issueCode = code
 				// Blame rule: import problems in the data are the workbook's,
 				// not the mapping's. The mapping stays PARSED so a fixed
 				// workbook imports without operator action. The workbook is
 				// already PARSED (there is no PARSED -> PARSE_FAILED edge), so
 				// its issues are recorded in its parse_warnings and the tables
 				// stay UNAVAILABLE/FACTS_INVALID.
-				issues = append(an.issues, an.warnings...)
+				issues = details
 				an = nil
 			}
 		} else {
@@ -253,11 +395,14 @@ func (w *Worker) parseMapping(ctx context.Context, job jobs.Job, t target, data 
 		if !cp.same(snap) {
 			return errStale // the workbook moved (for example became PARSED) since it was read
 		}
+		if _, err := w.checkCounterpart(ctx, q, bucket, qaKeyOf(wkey), qsnap); err != nil {
+			return err
+		}
 		in := facts.ApplyInput{MappingSourceFileID: t.ver.SourceFileID, MappingVersionID: t.ver.ID, WorkbookSourceFileID: wbSource}
 		if an == nil {
 			in.UnavailableCode = facts.ReasonWorkbookNotParsed
 			if issues != nil {
-				in.UnavailableCode = CodeFactsInvalid
+				in.UnavailableCode = issueCode
 				raw, err := encodeWarnings(issues)
 				if err != nil {
 					return err
@@ -285,5 +430,95 @@ func (w *Worker) parseMapping(ctx context.Context, job jobs.Job, t target, data 
 			return fmt.Errorf("update workbook warnings: %w", err)
 		}
 		return facts.Apply(ctx, tx, in, q)
+	})
+}
+
+// parseQAMapping validates a `<name>.qa.yaml` file. A mapping that parses has
+// no state of its own to import: when its workbook is already PARSED, the
+// workbook's sections are derived again under it (the covered sheets stop
+// being content and their rows become Q&A sections), and generation is
+// queued to top up the new rows. Whichever of the two files parses last
+// therefore does the work, as with facts; the workbook parse reads the
+// mapping, and the final transaction re-checks both siblings under a lock.
+//
+// The blame rule is the facts one: a problem that comes from the workbook's
+// data (sheet or header not found, a sheet claimed twice) fails nothing here.
+// The mapping stays PARSED, the workbook keeps its sections, and the issues
+// are recorded in the workbook's parse_warnings.
+func (w *Worker) parseQAMapping(ctx context.Context, job jobs.Job, t target, data []byte) (string, string, error) {
+	qf, err := xlsx.ParseQAMappingFile(data)
+	if err != nil {
+		return w.fail(ctx, job, t, xlsx.CodeMappingInvalid, mappingWarnings(err))
+	}
+	bucket, wkey := t.ver.Bucket, workbookKeyOfQA(t.ver.ObjectKey)
+	snap, err := w.peek(ctx, bucket, wkey)
+	if err != nil {
+		return t.kind, "", err
+	}
+	mf, fsnap, err := w.factsSibling(ctx, bucket, wkey)
+	if err != nil {
+		return t.kind, "", err
+	}
+
+	var an *analysis
+	var issues []Warning
+	if snap.Valid && snap.State == string(domain.FileVersionParsed) {
+		wdata, reason, err := w.fetch(ctx, wkey, snap.SHA)
+		if err != nil {
+			return t.kind, "", err
+		}
+		if reason == "" {
+			if an, err = analyzeWorkbook(wdata, wkey, mf, qf); err != nil {
+				return t.kind, "", fmt.Errorf("re-read workbook %s: %w", wkey, err)
+			}
+			if code, details := an.failure(); code != "" {
+				issues = details
+				an = nil
+			}
+		} else {
+			w.log().Warn("workbook object changed after its scan; the Q&A mapping waits for its next parse", "key", wkey, "reason", reason)
+		}
+	}
+
+	return w.succeed(ctx, job, t, nil, nil, func(q *queries.Queries, tx pgx.Tx) error {
+		cp, err := w.checkCounterpart(ctx, q, bucket, wkey, snap)
+		if err != nil {
+			return err
+		}
+		if _, err := w.checkCounterpart(ctx, q, bucket, mappingKeyOf(wkey), fsnap); err != nil {
+			return err
+		}
+		if an == nil {
+			if issues == nil {
+				return nil // no workbook yet, or not parsed: its parse will read this mapping
+			}
+			raw, err := encodeWarnings(issues)
+			if err != nil {
+				return err
+			}
+			if err := q.SetParseWarnings(ctx, queries.SetParseWarningsParams{ID: cp.ID, ParseWarnings: raw}); err != nil {
+				return fmt.Errorf("record import issues on the workbook: %w", err)
+			}
+			return nil
+		}
+		if err := w.writeSections(ctx, q, cp.ID, an.sections); err != nil {
+			return err
+		}
+		raw, err := encodeWarnings(an.warnings)
+		if err != nil {
+			return err
+		}
+		if err := q.SetParseWarnings(ctx, queries.SetParseWarningsParams{ID: cp.ID, ParseWarnings: raw}); err != nil {
+			return fmt.Errorf("update workbook warnings: %w", err)
+		}
+		if len(an.sections) > 0 {
+			// Generation tops up the Q&A rows that have no candidate yet.
+			if _, err := jobs.New(q).Rearm(ctx, jobs.Enqueue{
+				Kind: jobs.KindGenerate, Payload: payload{FileVersionID: cp.ID}, DedupeKey: cp.ID.String(),
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }

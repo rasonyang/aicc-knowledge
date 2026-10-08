@@ -62,10 +62,11 @@ The content path runs offline as CLI subcommands of one binary (`cmd/aicc-knowle
 2. **`parse`** (`internal/parse` on top of the pure parsers `internal/docx` and `internal/xlsx`):
    - Writes `parsed_sections`. Their identity is `(file_version_id, ordinal)` plus `source_ref`, never the row id, because sections are rewritten.
    - Imports facts: `<name>.facts.yaml` next to `<name>.xlsx` maps sheets to typed `fact_rows` (`internal/facts`). A failed import makes the table `UNAVAILABLE`; stale or partial rows are never served.
+   - Imports Q&A sheets: `<name>.qa.yaml` maps question/answer columns to `XLSX_QA_ROW` sections; `generate` turns them into candidates without the LLM (it only shortens an overlong answer).
    - Then it enqueues a GENERATE job.
 3. **`generate`** (`internal/generate`, `internal/llm`, `internal/candidate`):
    - One LLM call per section, using JSON-schema output and a versioned prompt.
-   - Deterministic post-validation (length, markdown, language, dedupe) and the `CONTAINS_FIGURES` flag.
+   - Stub sections (title or boilerplate only) are not sent; they become context of the next section. Deterministic post-validation (length, markdown, language, dedupe, figures must occur in the source) and the `CONTAINS_FIGURES` flag.
    - Inserts candidates as `PENDING_REVIEW`.
    - `candidate.ContentHash` is the single hash used by generate, export and import.
 4. **`export-review` / `import-review`** (`internal/review`): the Excel round trip. The import uses a savepoint per row and writes the `candidate_reviews` audit table.
@@ -78,7 +79,7 @@ The content path runs offline as CLI subcommands of one binary (`cmd/aicc-knowle
    - **Rollback:** swaps back, or rebuilds from the snapshot when the index was pruned.
 
 The read path is `serve` (`internal/httpapi` on the generated `internal/api`, plus `internal/search`):
-- `POST /v1/search` embeds the query, runs a pure-vector Meilisearch search with a per-language `rankingScoreThreshold`, and reports per-stage latency. It never queries PostgreSQL, because the live uid only ever holds published content.
+- `POST /v1/search` embeds the query, runs a pure-vector Meilisearch search, applies the per-language threshold to the hits itself (never `rankingScoreThreshold`: Meilisearch takes a much slower path when fewer than `limit` hits clear it), and reports per-stage latency. It never queries PostgreSQL, because the live uid only ever holds published content.
 - `POST /v1/facts/{table}/lookup` is an exact-match lookup in PostgreSQL.
 - A separate unauthenticated ops listener serves `/metrics`, `/healthz` and `/readyz`. Readiness probes TEI at `/info`, because TEI's `/health` runs an inference and queues behind load.
 
@@ -96,7 +97,7 @@ The read path is `serve` (`internal/httpapi` on the generated `internal/api`, pl
 - **S3:** aws-sdk-go-v2 with a configurable endpoint and path-style addressing. Change detection is by ListObjectsV2 polling only, with no event notifications.
 - **Formats:**
   - `.docx` is parsed with the stdlib; headings come from the `styles.xml` `outlineLvl`, never from style names.
-  - `.xlsx` is parsed with excelize.
+  - `.xlsx` is parsed with excelize. Sheets with curated Q&A columns are imported directly through `<name>.qa.yaml`.
   - `.doc` and `.xls` are `UNSUPPORTED_FORMAT`. No PDF, no OCR.
 - **Embeddings:** TEI (CPU) serving bge-m3. Meilisearch `userProvided` vectors, one index per language (`faq_en`, `faq_zh`), and one vector per question phrasing.
 - **Publishing:** nothing unreviewed is ever published. Publish builds a new index, then swaps it atomically; every publication is versioned.

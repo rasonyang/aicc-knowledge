@@ -13,9 +13,11 @@
 package search
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/rasonyang/aicc-knowledge/internal/domain"
@@ -197,13 +199,19 @@ func (s *Searcher) search(ctx context.Context, req Request, start time.Time) (Re
 	}
 
 	t1 := time.Now()
-	res, err := s.Meili.VectorSearch(ctx, s.liveUID(req.Language), vecs[0], max(topK, overfetch), filter, threshold)
+	res, err := s.Meili.VectorSearch(ctx, s.liveUID(req.Language), vecs[0], max(topK, overfetch), filter, 0)
 	resp.Latency.Search = time.Since(t1)
 	if err != nil {
 		return resp, s.wrap(ctx, "search the live index", err)
 	}
 
-	hits := res.Hits[:min(len(res.Hits), topK)]
+	// The threshold is applied here, not by Meilisearch: a rankingScoreThreshold
+	// that fewer than limit hits clear sends Meilisearch down a much slower
+	// path.
+	hits := slices.Clone(res.Hits)
+	slices.SortStableFunc(hits, func(a, b meili.Hit) int { return cmp.Compare(b.Score, a.Score) })
+	hits = slices.DeleteFunc(hits, func(h meili.Hit) bool { return h.Score < threshold })
+	hits = hits[:min(len(hits), topK)]
 	resp.Items = make([]Item, 0, len(hits))
 	for _, h := range hits {
 		resp.Items = append(resp.Items, Item{ID: h.ID, Question: h.Question, Answer: h.Answer, SourceRef: h.SourceRef, Score: h.Score})

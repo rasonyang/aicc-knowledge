@@ -59,7 +59,7 @@ func TestGenerateExportReviewImportCLI(t *testing.T) {
 		heading := strings.TrimPrefix(strings.SplitN(c.User(), "\n", 2)[0], "Section heading: ")
 		return llmtest.Reply(
 			llmtest.Cand{Question: "What is the " + heading + " policy?", Answer: "The " + heading + " policy is in the handbook.", Language: "EN"},
-			llmtest.Cand{Question: "How long is the " + heading + " period?", Answer: "It is 30 days.", Language: "EN"},
+			llmtest.Cand{Question: "How long is the " + heading + " period?", Answer: "It is thirty days.", Language: "EN"},
 		), nil
 	})
 	t.Setenv("KB_DATABASE_URL", testdb.ScratchDSN(t, "cmdreview"))
@@ -81,7 +81,7 @@ func TestGenerateExportReviewImportCLI(t *testing.T) {
 	}
 	code, out, stderr := invoke(t, "generate")
 	if code != exitOK || !strings.HasPrefix(out, "claimed=1 generated=1 skipped=0 errors=0 sections=3 candidates=6 warnings=0 duplicates=0 ") ||
-		!strings.Contains(out, "prompt_version=faq-v1 model=fake-model") {
+		!strings.Contains(out, "prompt_version=faq-v2 model=fake-model") {
 		t.Fatalf("generate = %d %q %s", code, out, stderr)
 	}
 	// Nothing left to do; re-arming a done version skips it.

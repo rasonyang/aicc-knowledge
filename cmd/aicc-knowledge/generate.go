@@ -23,7 +23,8 @@ import (
 // runGenerate runs migrations, then claims GENERATE jobs until none remains
 // (or, with -watch, keeps polling every -interval until interrupted) and
 // prints a summary per pass on stdout. -version queues one file version
-// first (an already generated version is skipped). It exits 0 when no job hit
+// first and processes only that version's job; every other queued job is left
+// alone (an already generated version is skipped). It exits 0 when no job hit
 // an infrastructure error, 1 otherwise.
 func runGenerate(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("generate", flag.ContinueOnError)
@@ -119,7 +120,7 @@ func runGenerateLoop(ctx context.Context, cfg config.Config, watch bool, version
 	if err != nil {
 		return false, err
 	}
-	w := &generate.Worker{Store: st, LLM: client, Limits: limitsOf(cfg), Metrics: prov.Metrics, Log: slog.Default()}
+	w := &generate.Worker{Store: st, LLM: client, Limits: limitsOf(cfg), Metrics: prov.Metrics, Log: slog.Default(), Only: version}
 
 	if version != uuid.Nil {
 		queued, err := w.Enqueue(ctx, version)
@@ -134,8 +135,9 @@ func runGenerateLoop(ctx context.Context, cfg config.Config, watch bool, version
 		if sum.Sections > 0 {
 			perSection = sum.LLMTime / time.Duration(sum.Sections)
 		}
-		fmt.Fprintf(stdout, "claimed=%d generated=%d skipped=%d errors=%d sections=%d candidates=%d warnings=%d duplicates=%d llm_seconds=%.1f seconds_per_section=%.1f prompt_version=%s model=%s\n",
+		fmt.Fprintf(stdout, "claimed=%d generated=%d skipped=%d errors=%d sections=%d candidates=%d warnings=%d duplicates=%d skipped_stub=%d skipped_no_language=%d truncated=%d qa_verbatim=%d qa_condensed=%d qa_dropped=%d llm_seconds=%.1f seconds_per_section=%.1f prompt_version=%s model=%s\n",
 			sum.Claimed, sum.Generated, sum.Skipped, sum.Errors, sum.Sections, sum.Candidates, sum.Warnings, sum.Duplicates,
+			sum.SkippedStub, sum.SkippedNoLanguage, sum.Truncated, sum.QAVerbatim, sum.QACondensed, sum.QADropped,
 			sum.LLMTime.Seconds(), perSection.Seconds(), generate.PromptVersion, client.Model())
 		clean := sum.Errors == 0
 		switch {

@@ -83,3 +83,19 @@ Decisions taken in M5 (details in the CHANGELOG and docs/research/02-meilisearch
 
 - One vector per distinct phrasing of a question (Meilisearch scores a document by its best vector). The first publication of a language renames the staging index onto the absent live uid; later ones swap. Search does not ask PostgreSQL for the LIVE publication. A document's scope comes from its S3 path (`KB_S3_SCOPE_PATH_TEMPLATE`); a document without a scope key is global for that key.
 - Known limits: a crash between the swap and the database commit leaves a `BUILDING` row (the next publish marks it `FAILED`/`PUBLISH_ABANDONED`; a rollback verifies a retained index against `publication_items` before trusting `content_uid` and rebuilds when it disagrees). `eval -sweep` runs in process only. The Meilisearch query client opens a connection per search (reused connections stalled about 40 ms in the compose stack).
+
+## M6. Validation findings and Q&A import
+
+Found by a validation run on a private, desensitized corpus. Each fix has its own test.
+
+- [x] Search: the searcher no longer sends `rankingScoreThreshold` (Meilisearch needs a slow path when fewer than `limit` hits clear it); it fetches at least 10 hits and applies the threshold itself. Test: a recording transport around the real client sees no threshold on a NO_MATCH search.
+- [x] Generate counts heading plus body for its length gate. A question heading (ends with `？` or `?`, or starts with `Q` and a digit) with a short body is sent. Every skipped section is logged and counted (`SKIPPED_STUB`, `SKIPPED_NO_LANGUAGE`, summary fields).
+- [x] Stub sections no longer reach the LLM: after removing boilerplate lines a body under 20 characters is context for the next section. Every prompt carries the document title and heading path; prompt `faq-v2` returns nothing when the section states no answer; an answer figure (digits, full-width digits, model numbers) absent from the source is dropped as `UNGROUNDED_FIGURE`.
+- [x] `candidate.DetectLanguage`: Chinese with many Latin product names is ZH (6 or more Han characters, or 4 or more and 15% of the letters).
+- [x] `.xlsx` content is chunked by size (6000 characters, header repeated); a single row over the limit is cut with `SECTION_TRUNCATED`. Generate warns whenever it cuts input.
+- [x] `CONTAINS_FIGURES` ignores letter-first model tokens (`X5`, `ZQ 3S`, `A2`); `4K`, `60fps`, `1999元` and plain numbers still count.
+- [x] `generate --version <id>` claims only that version's job.
+- [x] An outline-level paragraph over 40 characters or ending in `。！.!` is body text (`HEADING_DEMOTED`); a short question heading stays a heading.
+- [x] Consecutive identical heading entries collapse in a heading path.
+- [x] Q&A workbook direct import: `<name>.qa.yaml` mapping, `XLSX_QA_ROW` sections (migration 00013), generate without the LLM (`qa-import-v1`) or with one condense call (`qa-condense-v1`), review/export/publish unchanged.
+Known limits of M6: the verbatim import trusts the sheet, so every row still needs a reviewer; spelled-out numbers (`五十`, `fifty`) are not compared by the grounding check, so a condensed or generated answer that rewrites `50` as `五十` is dropped; a stub's context goes to the next section that is sent only; the ordinals of Q&A rows follow the content chunks, so a facts mapping that removes a content sheet shifts them and stales their candidates (regenerate by re-arming the version).

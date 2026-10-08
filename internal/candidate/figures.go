@@ -40,7 +40,11 @@ func anyFigures(list []string) bool {
 //     dozen, ...) or percent/dollar/cent/yuan/euro; "one" alone is not
 //     flagged because it is mostly a pronoun;
 //   - a Chinese numeral used as a quantity (see chineseQuantity).
+//
+// Letter-first model tokens are not figures (see modelToken): X5, A2, ZQ 3,
+// ZQ 3S. Digit-first tokens (4K, 60fps, 128GB, 1999元) and plain numbers are.
 func ContainsFigures(text string) bool {
+	text = modelToken.ReplaceAllString(text, " ")
 	for _, r := range text {
 		if unicode.IsNumber(r) || unicode.Is(unicode.Sc, r) || r == '%' || r == '％' || r == '‰' {
 			return true
@@ -51,6 +55,14 @@ func ContainsFigures(text string) bool {
 	}
 	return chineseQuantity(text)
 }
+
+// modelToken matches a letter-first product model: capital letters, an
+// optional space or hyphen, one or two digits and up to two letters (X5, A2,
+// ZQ 3, ZQ 3S, Pro-2), or a capitalised word, an optional hyphen and the
+// digits (Pro-2, Max5). A capitalised word followed by a space and a number
+// ("Open 24 hours", "Step 3") is not a model. The match must end at a word
+// boundary, so X500 and ZQ 3000 are not models.
+var modelToken = regexp.MustCompile(`\b(?:[A-Z]{1,5}[ -]?|[A-Z][a-z]{1,8}-?)\d{1,2}[A-Za-z]{0,2}\b`)
 
 var englishFigure = regexp.MustCompile(`(?i)\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|dozen|percent|dollars?|cents?|euros?|yuan|rmb|usd|cny)\b`)
 

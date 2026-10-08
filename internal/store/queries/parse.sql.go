@@ -157,6 +157,9 @@ type InsertParsedSectionsParams struct {
 	Level         int32     `json:"level"`
 	Body          string    `json:"body"`
 	SourceRef     string    `json:"sourceRef"`
+	QaQuestion    *string   `json:"qaQuestion"`
+	QaAlternates  []string  `json:"qaAlternates"`
+	QaLanguage    *string   `json:"qaLanguage"`
 }
 
 const listCurrentFailedFileVersions = `-- name: ListCurrentFailedFileVersions :many
@@ -200,7 +203,7 @@ func (q *Queries) ListCurrentFailedFileVersions(ctx context.Context) ([]FileVers
 }
 
 const listParsedSections = `-- name: ListParsedSections :many
-SELECT id, file_version_id, ordinal, kind, heading_path, level, body, source_ref FROM parsed_sections WHERE file_version_id = $1 ORDER BY ordinal
+SELECT id, file_version_id, ordinal, kind, heading_path, level, body, source_ref, qa_question, qa_alternates, qa_language FROM parsed_sections WHERE file_version_id = $1 ORDER BY ordinal
 `
 
 func (q *Queries) ListParsedSections(ctx context.Context, fileVersionID uuid.UUID) ([]ParsedSection, error) {
@@ -221,6 +224,9 @@ func (q *Queries) ListParsedSections(ctx context.Context, fileVersionID uuid.UUI
 			&i.Level,
 			&i.Body,
 			&i.SourceRef,
+			&i.QaQuestion,
+			&i.QaAlternates,
+			&i.QaLanguage,
 		); err != nil {
 			return nil, err
 		}

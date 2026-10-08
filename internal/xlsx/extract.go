@@ -8,12 +8,17 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // Default extraction parameters used when ExtractOptions fields are <= 0.
 const (
 	DefaultHeaderRows = 1
 	DefaultChunkRows  = 50
+	// DefaultMaxChunkChars bounds the text of one section, in characters. It
+	// equals the most text generate sends to the LLM (generate.MaxSectionChars;
+	// a test keeps the two equal), so a chunk is never cut downstream.
+	DefaultMaxChunkChars = 6000
 )
 
 // ExtractOptions tunes Extract.
@@ -23,6 +28,12 @@ type ExtractOptions struct {
 	HeaderRows int `json:"headerRows"`
 	// ChunkRows is the maximum number of data rows per section (default 50).
 	ChunkRows int `json:"chunkRows"`
+	// MaxChunkChars is the maximum text length of a section in characters,
+	// header line included (default DefaultMaxChunkChars). A chunk is closed
+	// early when the next row would not fit, so long rows give short chunks.
+	// A single row that cannot fit even alone is cut, with a
+	// SECTION_TRUNCATED warning.
+	MaxChunkChars int `json:"maxChunkChars"`
 	// ExcludeSheets names sheets that are skipped entirely, without a
 	// warning: the caller handles them elsewhere (sheets covered by a facts
 	// mapping are facts-only). Ordinals count only the sheets that remain.
@@ -62,6 +73,9 @@ func Extract(r io.ReaderAt, size int64, opts ExtractOptions) (*Content, error) {
 	}
 	if opts.ChunkRows <= 0 {
 		opts.ChunkRows = DefaultChunkRows
+	}
+	if opts.MaxChunkChars <= 0 {
+		opts.MaxChunkChars = DefaultMaxChunkChars
 	}
 	wb, err := openWorkbook(r, size)
 	if err != nil {
@@ -104,8 +118,16 @@ func extractSheet(g *grid, opts ExtractOptions, ws *warnSet, out *Content) {
 	}
 	headers := g.headerPaths(1, opts.HeaderRows, ws)
 	headerLine := renderLine(append([]string(nil), headers[1:]...))
+	// The header line is repeated in every chunk, so it may take at most half
+	// of the budget; the rest is for rows.
+	if n := utf8.RuneCountInString(headerLine); n > opts.MaxChunkChars/2 {
+		headerLine = truncateRunes(headerLine, opts.MaxChunkChars/2)
+		ws.add(Warning{Code: CodeSectionTruncated, Detail: fmt.Sprintf("header line of %d characters cut to %d", n, opts.MaxChunkChars/2), Location: g.rangeRef(1, 1, opts.HeaderRows, g.maxCol)})
+	}
+	headerChars := utf8.RuneCountInString(headerLine)
 
 	var lines []string
+	used := headerChars // characters of the chunk being built, header included
 	first, last := 0, 0
 	flush := func() {
 		if len(lines) == 0 {
@@ -119,7 +141,7 @@ func extractSheet(g *grid, opts ExtractOptions, ws *warnSet, out *Content) {
 			LastRow:     last,
 			SourceRef:   g.rangeRef(first, 1, last, g.maxCol),
 		})
-		lines = nil
+		lines, used = nil, headerChars
 	}
 	for row := opts.HeaderRows + 1; row <= g.maxRow; row++ {
 		if !g.rowHasContent(row) {
@@ -137,14 +159,36 @@ func extractSheet(g *grid, opts ExtractOptions, ws *warnSet, out *Content) {
 			}
 			cells[c-1] = cd.display
 		}
+		line := renderLine(cells)
+		n := utf8.RuneCountInString(line)
+		if room := opts.MaxChunkChars - headerChars - 1; n > room {
+			// Not even alone in a chunk: cut it, loudly.
+			ws.add(Warning{Code: CodeSectionTruncated, Detail: fmt.Sprintf("row %d has %d characters, cut to %d", row, n, room), Location: g.rangeRef(row, 1, row, g.maxCol), Row: row})
+			line, n = truncateRunes(line, room), room
+		}
+		if len(lines) > 0 && used+1+n > opts.MaxChunkChars {
+			flush()
+		}
 		if len(lines) == 0 {
 			first = row
 		}
 		last = row
-		lines = append(lines, renderLine(cells))
+		lines = append(lines, line)
+		used += 1 + n
 		if len(lines) == opts.ChunkRows {
 			flush()
 		}
 	}
 	flush()
+}
+
+func truncateRunes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
 }

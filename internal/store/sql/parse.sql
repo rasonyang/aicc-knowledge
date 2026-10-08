@@ -32,8 +32,8 @@ WHERE id = sqlc.arg(id) AND state = sqlc.arg(from_state) AND superseded_at IS NU
 DELETE FROM parsed_sections WHERE file_version_id = $1;
 
 -- name: InsertParsedSections :copyfrom
-INSERT INTO parsed_sections (file_version_id, ordinal, kind, heading_path, level, body, source_ref)
-VALUES ($1, $2, $3, $4, $5, $6, $7);
+INSERT INTO parsed_sections (file_version_id, ordinal, kind, heading_path, level, body, source_ref, qa_question, qa_alternates, qa_language)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
 
 -- name: ListParsedSections :many
 SELECT * FROM parsed_sections WHERE file_version_id = $1 ORDER BY ordinal;

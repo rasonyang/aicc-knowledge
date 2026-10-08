@@ -13,7 +13,7 @@
 //     metadata is recorded so the next scan does not download again;
 //   - different hash: the current version is superseded, its candidates become
 //     STALE, and a new version (version_no+1) is inserted, DISCOVERED with a
-//     PARSE job for .docx, .xlsx and *.facts.yaml, or UNSUPPORTED with
+//     PARSE job for .docx, .xlsx, *.facts.yaml and *.qa.yaml, or UNSUPPORTED with
 //     parse_error_code UNSUPPORTED_FORMAT for everything else, or UNSUPPORTED
 //     with OBJECT_TOO_LARGE (no job) when the object is larger than the
 //     configured cap;
@@ -104,6 +104,8 @@ const (
 	FormatDocx
 	FormatXlsx
 	FormatFacts
+	// FormatQA is a Q&A mapping, `<name>.qa.yaml` next to `<name>.xlsx`.
+	FormatQA
 )
 
 // Classify maps an object key to its format by extension, case-insensitively.
@@ -113,6 +115,8 @@ func Classify(key string) Format {
 	switch {
 	case strings.HasSuffix(lower, ".facts.yaml"):
 		return FormatFacts
+	case strings.HasSuffix(lower, ".qa.yaml"):
+		return FormatQA
 	case path.Ext(lower) == ".docx":
 		return FormatDocx
 	case path.Ext(lower) == ".xlsx":

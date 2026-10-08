@@ -1,0 +1,119 @@
+{
+  "sections": [
+    {
+      "ordinal": 1,
+      "headingPath": [
+        "Gadget Guide"
+      ],
+      "level": 1,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "Applicable products: Gadget One, Gadget Two"
+        }
+      ],
+      "sourceRef": "Gadget Guide#1"
+    },
+    {
+      "ordinal": 2,
+      "headingPath": [
+        "Gadget Guide",
+        "Battery"
+      ],
+      "level": 2,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "The battery lasts about ten hours on a single charge when the screen brightness is at the default level."
+        }
+      ],
+      "sourceRef": "Gadget Guide > Battery#2"
+    },
+    {
+      "ordinal": 3,
+      "headingPath": [
+        "Gadget Guide",
+        "Does it support wireless charging?"
+      ],
+      "level": 2,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "No."
+        }
+      ],
+      "sourceRef": "Gadget Guide > Does it support wireless charging?#3"
+    },
+    {
+      "ordinal": 4,
+      "headingPath": [
+        "Gadget Guide",
+        "Warranty"
+      ],
+      "level": 2,
+      "blocks": [],
+      "sourceRef": "Gadget Guide > Warranty#4"
+    },
+    {
+      "ordinal": 5,
+      "headingPath": [
+        "Gadget Guide",
+        "Water resistance"
+      ],
+      "level": 2,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "The Gadget One has an IP67 rating, so it survives a short dip in fresh water."
+        }
+      ],
+      "sourceRef": "Gadget Guide > Water resistance#5"
+    },
+    {
+      "ordinal": 6,
+      "headingPath": [
+        "Gadget Guide",
+        "Q3 Colors"
+      ],
+      "level": 2,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "Black."
+        }
+      ],
+      "sourceRef": "Gadget Guide > Q3 Colors#6"
+    },
+    {
+      "ordinal": 7,
+      "headingPath": [
+        "Gadget Guide",
+        "是否支持无线充电？"
+      ],
+      "level": 2,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "不支持。"
+        }
+      ],
+      "sourceRef": "Gadget Guide > 是否支持无线充电？#7"
+    },
+    {
+      "ordinal": 8,
+      "headingPath": [
+        "Gadget Guide",
+        "Release notes"
+      ],
+      "level": 2,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "Version: 2.1"
+        }
+      ],
+      "sourceRef": "Gadget Guide > Release notes#8"
+    }
+  ],
+  "warnings": []
+}

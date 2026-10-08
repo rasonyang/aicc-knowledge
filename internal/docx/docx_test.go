@@ -40,8 +40,8 @@ func marshal(t *testing.T, v any) []byte {
 
 func TestGolden(t *testing.T) {
 	names, _ := filepath.Glob("testdata/*.docx")
-	if len(names) != 6 {
-		t.Fatalf("fixtures = %d, want 6", len(names))
+	if len(names) != 8 {
+		t.Fatalf("fixtures = %d, want 8", len(names))
 	}
 	for _, n := range names {
 		base := filepath.Base(n)
@@ -244,6 +244,53 @@ func TestErrors(t *testing.T) {
 				t.Errorf("code = %q, want %q (%v)", got, c.code, err)
 			}
 		})
+	}
+}
+
+func TestSentenceLikeHeadingsAreDemotedAndDuplicatesCollapse(t *testing.T) {
+	d, err := ParseBytes(fixture(t, "sentences.docx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := paths(d)
+	wantPaths := [][]string{
+		{"Acme Widget Guide"},
+		{"Acme Widget Guide"}, // the repeated level-3 title: same path, collapsed
+		{"Acme Widget Guide", "Setup"},
+		{"Acme Widget Guide", "如何清洁屏幕？"},
+		{"Acme Widget Guide", "Does it work offline?"},
+		{"Acme Widget Guide", "Version 2.0"},
+	}
+	// "谢谢您的阅读！" ends the level-1 chain: it is demoted, so it joins the body of the last section.
+	if !reflect.DeepEqual(got, wantPaths) {
+		t.Fatalf("paths = %q\nwant %q", got, wantPaths)
+	}
+	if len(d.Sections) != 6 {
+		t.Fatalf("sections = %d, want 6", len(d.Sections))
+	}
+	if d.Sections[1].SourceRef != "Acme Widget Guide#2" {
+		t.Errorf("source ref = %q", d.Sections[0].SourceRef)
+	}
+	if txt := d.Sections[1].Text(); !strings.Contains(txt, "Welcome to the Acme Widget Guide.") {
+		t.Errorf("the intro sentence should be body text of the title section: %q", txt)
+	}
+	if txt := d.Sections[2].Text(); !strings.Contains(txt, "这是一段很长的介绍文字") || !strings.Contains(txt, "green button") {
+		t.Errorf("the long paragraph should be body of Setup: %q", txt)
+	}
+	if txt := d.Sections[4].Text(); !strings.Contains(txt, "谢谢您的阅读！") || !strings.Contains(txt, "Yes.") {
+		t.Errorf("the closing sentence should be body text: %q", txt)
+	}
+	if txt := d.Sections[3].Text(); txt != "每周清洁一次即可。" {
+		t.Errorf("question heading body = %q", txt)
+	}
+	n := 0
+	for _, w := range d.Warnings {
+		if w.Code == WarnHeadingDemoted {
+			n++
+		}
+	}
+	if n != 3 || len(d.Warnings) != 3 {
+		t.Errorf("warnings = %+v, want 3 HEADING_DEMOTED", d.Warnings)
 	}
 }
 

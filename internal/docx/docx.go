@@ -10,6 +10,11 @@
 //     w:outlineLvl, following w:basedOn chains (cycles are guarded). Style
 //     names and ids are never consulted. Outline level 9 means body text.
 //     Heading level = outlineLvl + 1.
+//   - Heading text is checked by content as well: an outline-level paragraph
+//     longer than 40 characters or ending in 。！.! is a sentence, not a
+//     heading. It becomes body text of the current section with a
+//     HEADING_DEMOTED warning. A short question (？ or ?) stays a heading.
+//     Consecutive identical entries of a heading path collapse into one.
 //   - The view is "accept all tracked changes": w:ins and w:moveTo content is
 //     kept, w:del and w:moveFrom content is dropped, a deleted paragraph mark
 //     merges the paragraph into the next one, formatting changes are ignored.
@@ -49,6 +54,7 @@ const (
 	WarnStyleNotFound       = "STYLE_NOT_FOUND"
 	WarnStylesMissing       = "STYLES_MISSING"
 	WarnInvalidOutlineLvl   = "INVALID_OUTLINE_LEVEL"
+	WarnHeadingDemoted      = "HEADING_DEMOTED"
 )
 
 // Error is a coded parse failure.

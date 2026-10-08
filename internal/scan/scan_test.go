@@ -601,6 +601,7 @@ func TestClassify(t *testing.T) {
 	cases := map[string]scan.Format{
 		"a.docx": scan.FormatDocx, "dir/A.DOCX": scan.FormatDocx, "b.xlsx": scan.FormatXlsx,
 		"x.facts.yaml": scan.FormatFacts, "x.FACTS.YAML": scan.FormatFacts,
+		"x.qa.yaml": scan.FormatQA, "dir/X.QA.YAML": scan.FormatQA, "x.qa.yml": scan.FormatUnsupported, "x.qa.json": scan.FormatUnsupported,
 		"x.yaml": scan.FormatUnsupported, "x.facts.yml": scan.FormatUnsupported,
 		"a.doc": scan.FormatUnsupported, "a.xls": scan.FormatUnsupported, "a.pdf": scan.FormatUnsupported,
 		"docx": scan.FormatUnsupported, "a.docx.bak": scan.FormatUnsupported,

@@ -160,6 +160,39 @@ func (q *Queries) ListCandidatesForExport(ctx context.Context, arg ListCandidate
 	return items, nil
 }
 
+const listLiveCandidateSections = `-- name: ListLiveCandidateSections :many
+SELECT DISTINCT section_ordinal, source_ref FROM candidates
+WHERE file_version_id = $1 AND state <> 'STALE' AND section_ordinal IS NOT NULL
+`
+
+type ListLiveCandidateSectionsRow struct {
+	SectionOrdinal *int32 `json:"sectionOrdinal"`
+	SourceRef      string `json:"sourceRef"`
+}
+
+// The (ordinal, source_ref) of every section of a version that has a
+// candidate in any state but STALE. Generation uses it to find Q&A rows that
+// still need one.
+func (q *Queries) ListLiveCandidateSections(ctx context.Context, fileVersionID uuid.UUID) ([]ListLiveCandidateSectionsRow, error) {
+	rows, err := q.db.Query(ctx, listLiveCandidateSections, fileVersionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLiveCandidateSectionsRow{}
+	for rows.Next() {
+		var i ListLiveCandidateSectionsRow
+		if err := rows.Scan(&i.SectionOrdinal, &i.SourceRef); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockCandidateForReview = `-- name: LockCandidateForReview :one
 SELECT c.id, c.file_version_id, c.language, c.question, c.alternate_questions, c.answer, c.source_ref, c.flags,
        c.state, c.content_hash, c.review_note,
@@ -225,6 +258,30 @@ WHERE c.file_version_id = $1
 // longer be checked against its source. The reason is appended to any note.
 func (q *Queries) MarkCandidatesOfWithdrawnSectionsStale(ctx context.Context, fileVersionID uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, markCandidatesOfWithdrawnSectionsStale, fileVersionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markQACandidatesOfRowStale = `-- name: MarkQACandidatesOfRowStale :execrows
+UPDATE candidates
+SET state = 'STALE',
+    review_note = COALESCE(NULLIF(review_note, '') || E'\n', '') || 'QA_ROW_CHANGED'
+WHERE file_version_id = $1 AND section_ordinal = $2 AND source_ref = $3
+  AND state <> 'STALE' AND prompt_version LIKE 'qa-%'
+`
+
+type MarkQACandidatesOfRowStaleParams struct {
+	FileVersionID  uuid.UUID `json:"fileVersionId"`
+	SectionOrdinal *int32    `json:"sectionOrdinal"`
+	SourceRef      string    `json:"sourceRef"`
+}
+
+// A Q&A row changed under the same (ordinal, source_ref): the candidates
+// imported from it (prompt_version qa-*) no longer match their source.
+func (q *Queries) MarkQACandidatesOfRowStale(ctx context.Context, arg MarkQACandidatesOfRowStaleParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markQACandidatesOfRowStale, arg.FileVersionID, arg.SectionOrdinal, arg.SourceRef)
 	if err != nil {
 		return 0, err
 	}

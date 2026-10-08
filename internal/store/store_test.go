@@ -67,8 +67,8 @@ func TestMigrateUpDownUp(t *testing.T) {
 		t.Fatalf("tables after up = %v, want %v", got, want)
 	}
 	applied, latest, err := s.MigrationVersions(ctx)
-	if err != nil || applied != latest || latest != 12 {
-		t.Fatalf("versions applied=%d latest=%d err=%v, want 12/12", applied, latest, err)
+	if err != nil || applied != latest || latest != 13 {
+		t.Fatalf("versions applied=%d latest=%d err=%v, want 13/13", applied, latest, err)
 	}
 
 	if err := s.MigrateDown(ctx); err != nil {
@@ -179,6 +179,7 @@ func TestGoEnumsEqualDatabaseCheckConstraints(t *testing.T) {
 		{"candidates", "language", goValues(strs(len(ls), func(i int) string { return string(ls[i]) })...)},
 		{"publications", "language", goValues(strs(len(ls), func(i int) string { return string(ls[i]) })...)},
 		{"parsed_sections", "kind", goValues(strs(len(sk), func(i int) string { return string(sk[i]) })...)},
+		{"parsed_sections", "qa_language", goValues(strs(len(ls), func(i int) string { return string(ls[i]) })...)},
 		{"candidates", "flags", goValues(strs(len(cf), func(i int) string { return string(cf[i]) })...)},
 		{"candidate_reviews", "action", goValues(strs(len(ra), func(i int) string { return string(ra[i]) })...)},
 		{"fact_tables", "status", goValues(strs(len(ft), func(i int) string { return string(ft[i]) })...)},
@@ -400,5 +401,47 @@ func TestPublicationsTrackWhereContentLives(t *testing.T) {
 	}
 	if err := exec(`UPDATE publication_items SET scope = '["acme"]'::jsonb`); err == nil {
 		t.Error("a scope that is not a JSON object was accepted")
+	}
+}
+
+// TestParsedSectionsHoldQARows pins migration 00013: a Q&A row section has a
+// question, every other kind has none, and the language is EN or ZH.
+func TestParsedSectionsHoldQARows(t *testing.T) {
+	ctx := context.Background()
+	s := openMigrated(t)
+	exec := func(sql string, args ...any) error {
+		_, err := s.Pool.Exec(ctx, sql, args...)
+		return err
+	}
+	if err := exec(`INSERT INTO source_files (bucket, object_key) VALUES ('b', 'k.xlsx')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec(`INSERT INTO file_versions (source_file_id, version_no, sha256, size_bytes, etag, last_modified_at, state)
+		SELECT id, 1, sha256('x'), 1, 'e', now(), 'PARSED' FROM source_files`); err != nil {
+		t.Fatal(err)
+	}
+	insert := func(ordinal int, kind string, question *string, lang *string) error {
+		return exec(`INSERT INTO parsed_sections (file_version_id, ordinal, kind, body, source_ref, qa_question, qa_alternates, qa_language)
+			SELECT id, $1, $2, 'answer', 'ref', $3, '{a,b}', $4 FROM file_versions`, ordinal, kind, question, lang)
+	}
+	q, en, fr := "question?", "EN", "FR"
+	if err := insert(1, "XLSX_QA_ROW", &q, &en); err != nil {
+		t.Fatalf("a Q&A row with a question: %v", err)
+	}
+	if err := insert(2, "XLSX_QA_ROW", nil, &en); err == nil {
+		t.Error("a Q&A row without a question was accepted")
+	}
+	if err := insert(3, "XLSX_CHUNK", &q, nil); err == nil {
+		t.Error("a chunk with a question was accepted")
+	}
+	if err := insert(4, "XLSX_QA_ROW", &q, &fr); err == nil {
+		t.Error("language FR was accepted")
+	}
+	if err := insert(5, "XLSX_CHUNK", nil, nil); err != nil {
+		t.Errorf("an ordinary chunk: %v", err)
+	}
+	var alts []string
+	if err := s.Pool.QueryRow(ctx, `SELECT qa_alternates FROM parsed_sections WHERE ordinal = 1`).Scan(&alts); err != nil || len(alts) != 2 {
+		t.Errorf("alternates = %v, %v", alts, err)
 	}
 }

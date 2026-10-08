@@ -255,6 +255,44 @@ func TestPipelineStoresValidatedCandidates(t *testing.T) {
 	}
 }
 
+func TestOnlyVersionLeavesOtherQueuedJobsAlone(t *testing.T) {
+	h := newHarness(t, func(c llmtest.Call) (string, *llmtest.Fail) {
+		return llmtest.Reply(llmtest.Cand{Question: "When is my bill issued?", Answer: "On the first day of the month.", Language: "EN"}), nil
+	})
+	h.Env.PutFixture("a.docx", "docx/faq_en.docx")
+	h.Env.PutFixture("b.docx", "docx/faq_en.docx")
+	h.Env.ScanParse()
+	a, _ := h.Env.Current("a.docx")
+	b, _ := h.Env.Current("b.docx")
+	if n := h.count(`SELECT count(*) FROM jobs WHERE kind = 'GENERATE' AND state = 'QUEUED'`); n != 2 {
+		t.Fatalf("queued GENERATE jobs = %d, want 2", n)
+	}
+
+	h.Worker.Only = uuid.MustParse(b.ID)
+	sum := h.run()
+	if sum.Claimed != 1 || sum.Generated != 1 {
+		t.Fatalf("summary = %+v, want exactly one job", sum)
+	}
+	if n := len(h.candidates(a.ID)); n != 0 {
+		t.Errorf("version a has %d candidates, want 0 (not selected)", n)
+	}
+	if n := len(h.candidates(b.ID)); n == 0 {
+		t.Error("version b has no candidates")
+	}
+	if n := h.count(`SELECT count(*) FROM jobs WHERE kind = 'GENERATE' AND state = 'QUEUED' AND dedupe_key = $1`, a.ID); n != 1 {
+		t.Errorf("the job of version a is not QUEUED any more (%d)", n)
+	}
+	// Running again selects nothing new: the job of b is done.
+	if again := h.run(); again.Claimed != 0 {
+		t.Errorf("second run = %+v", again)
+	}
+
+	h.Worker.Only = uuid.Nil
+	if rest := h.run(); rest.Claimed != 1 || len(h.candidates(a.ID)) == 0 {
+		t.Errorf("the remaining job was not processed: %+v", rest)
+	}
+}
+
 func TestOverlongAnswerIsRetriedWithFeedback(t *testing.T) {
 	long := strings.Repeat("Your bill is issued monthly. ", 20)
 	h := newHarness(t, func(c llmtest.Call) (string, *llmtest.Fail) {
@@ -595,7 +633,8 @@ func TestRealLLM(t *testing.T) {
 			}
 			ps := parsedSection(sec)
 			var sum Summary
-			got, err := w.section(context.Background(), "fixture", ps, &sum)
+			res, err := w.section(context.Background(), "fixture", ps, "", &sum)
+			got := res.drafts
 			if err != nil {
 				t.Fatal(err)
 			}

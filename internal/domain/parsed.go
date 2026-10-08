@@ -9,10 +9,15 @@ type SectionKind string
 const (
 	SectionKindDocxSection SectionKind = "DOCX_SECTION"
 	SectionKindXlsxChunk   SectionKind = "XLSX_CHUNK"
+	// SectionKindXlsxQARow is one row of a Q&A sheet imported through a
+	// `.qa.yaml` mapping: question, alternates and answer are kept apart.
+	SectionKindXlsxQARow SectionKind = "XLSX_QA_ROW"
 )
 
 // SectionKinds returns the enum's value set.
-func SectionKinds() []SectionKind { return []SectionKind{SectionKindDocxSection, SectionKindXlsxChunk} }
+func SectionKinds() []SectionKind {
+	return []SectionKind{SectionKindDocxSection, SectionKindXlsxChunk, SectionKindXlsxQARow}
+}
 
 // FactTableStatus says whether a fact table can be served.
 //

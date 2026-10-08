@@ -205,7 +205,36 @@ func errorsBook() {
 	finish(f, "errors.xlsx", nil)
 }
 
+// qa is a workbook of curated question and answer columns: an English sheet
+// (short, empty, hidden, multi-line and over-long answers), a Chinese sheet
+// with a short answer, and a notes sheet that stays ordinary content.
+func qa() {
+	f := excelize.NewFile()
+	must(f.SetSheetName("Sheet1", "FAQ"))
+	row(f, "FAQ", 1, "Question", "Answer", "Variants")
+	row(f, "FAQ", 2, "Does the X1 support wireless charging?", "Yes, it supports wireless charging.", "wireless charging?\ncan I charge it wirelessly?")
+	row(f, "FAQ", 3, "How long is the warranty?", "The warranty lasts 2 years.", "warranty period；how long does the warranty last")
+	row(f, "FAQ", 4, "Hidden question?", "Hidden answer.")
+	row(f, "FAQ", 5, "Is there a data cap?", nil)
+	row(f, "FAQ", 6, "How do I reset the device?", "Press and hold the power button for 10 seconds.\n- Wait for the light to blink twice.\n- Release the button.\nThe device restarts.")
+	row(f, "FAQ", 7, "Which colors can I choose?", "You can choose from black, white, red, blue, green, yellow, orange, purple, pink, grey, silver and gold, and every color is available in all sizes and in both the standard and the limited edition, with free engraving on request for orders placed online.")
+	must(f.SetRowVisible("FAQ", 4, false))
+
+	_, err := f.NewSheet("常见问题")
+	must(err)
+	row(f, "常见问题", 1, "问题", "回答", "其他问法")
+	row(f, "常见问题", 2, "是否支持无线充电？", "不支持。", "能无线充电吗；支持无线充吗")
+
+	_, err = f.NewSheet("Notes")
+	must(err)
+	row(f, "Notes", 1, "Topic", "Detail")
+	row(f, "Notes", 2, "Shipping", "Orders ship within three business days after the payment is confirmed.")
+	row(f, "Notes", 3, "Returns", "Unused items can be returned within thirty days of delivery.")
+	finish(f, "qa.xlsx", nil)
+}
+
 func main() {
+	qa()
 	catalog()
 	pricing()
 	errorsBook()

@@ -87,12 +87,14 @@ func Normalize(s string) string {
 	return b.String()
 }
 
-// DetectLanguage reports the dominant script of text: ZH when Han characters
-// make up at least 40% of the text's weight, where each Latin word counts as
-// two characters (a Chinese character carries about as much as two letters of
-// a word), otherwise EN. ok is false when the text has no letters at all.
+// DetectLanguage reports the dominant script of text. It is ZH when there are
+// at least zhMinHan Han characters (a sentence with that many is Chinese
+// however many Latin product names it carries), or when Han characters are at
+// at least 4 and at least 15% of the letters (Han plus Latin letters), or when they make up at
+// least 40% of the text's weight, where each Latin word counts as two
+// characters. Otherwise it is EN. ok is false when the text has no letters.
 func DetectLanguage(text string) (lang domain.Language, ok bool) {
-	han, words := 0, 0
+	han, words, latin := 0, 0, 0
 	inWord := false
 	for _, r := range text {
 		switch {
@@ -103,6 +105,7 @@ func DetectLanguage(text string) (lang domain.Language, ok bool) {
 			if !inWord {
 				words++
 			}
+			latin++
 			inWord = true
 		default:
 			inWord = false
@@ -111,8 +114,11 @@ func DetectLanguage(text string) (lang domain.Language, ok bool) {
 	if han == 0 && words == 0 {
 		return "", false
 	}
-	if float64(han)/float64(han+2*words) >= 0.4 {
+	if han >= zhMinHan || (han >= 4 && float64(han)/float64(han+latin) >= 0.15) || float64(han)/float64(han+2*words) >= 0.4 {
 		return domain.LanguageZH, true
 	}
 	return domain.LanguageEN, true
 }
+
+// zhMinHan is the number of Han characters that makes a text Chinese.
+const zhMinHan = 6

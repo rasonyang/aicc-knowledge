@@ -422,17 +422,24 @@ type SearchResult struct {
 
 // VectorSearch runs a pure-vector search (research caveat C4): the caller's
 // vector, hybrid {embedder: default, semanticRatio: 1.0}, empty q, scores
-// shown, and rankingScoreThreshold set. The vector score is (1+cos)/2, so an
-// orthogonal vector scores 0.5; threshold must be calibrated above that. An
-// empty hit list means NO_MATCH. filter comes from BuildFilter ("" = none).
+// shown, and rankingScoreThreshold set when threshold > 0 (0 omits it). The
+// vector score is (1+cos)/2, so an orthogonal vector scores 0.5; a threshold
+// must be calibrated above that. An empty hit list means NO_MATCH. filter
+// comes from BuildFilter ("" = none).
+//
+// The search service does not send a threshold: Meilisearch takes a much
+// slower path when fewer than limit hits clear it, so the searcher fetches
+// the hits and applies the threshold itself.
 func (c *Client) VectorSearch(ctx context.Context, uid string, vector []float32, limit int, filter string, threshold float64) (*SearchResult, error) {
 	body := map[string]any{
-		"q":                     "",
-		"vector":                vector,
-		"hybrid":                map[string]any{"embedder": EmbedderName, "semanticRatio": 1.0},
-		"limit":                 limit,
-		"showRankingScore":      true,
-		"rankingScoreThreshold": threshold,
+		"q":                "",
+		"vector":           vector,
+		"hybrid":           map[string]any{"embedder": EmbedderName, "semanticRatio": 1.0},
+		"limit":            limit,
+		"showRankingScore": true,
+	}
+	if threshold > 0 {
+		body["rankingScoreThreshold"] = threshold
 	}
 	if filter != "" {
 		body["filter"] = filter

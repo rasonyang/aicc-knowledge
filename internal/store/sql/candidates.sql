@@ -24,6 +24,15 @@ WHERE c.file_version_id = $1
       SELECT 1 FROM parsed_sections s
       WHERE s.file_version_id = c.file_version_id AND s.ordinal = c.section_ordinal AND s.source_ref = c.source_ref);
 
+-- name: MarkQACandidatesOfRowStale :execrows
+-- A Q&A row changed under the same (ordinal, source_ref): the candidates
+-- imported from it (prompt_version qa-*) no longer match their source.
+UPDATE candidates
+SET state = 'STALE',
+    review_note = COALESCE(NULLIF(review_note, '') || E'\n', '') || 'QA_ROW_CHANGED'
+WHERE file_version_id = $1 AND section_ordinal = $2 AND source_ref = $3
+  AND state <> 'STALE' AND prompt_version LIKE 'qa-%';
+
 -- name: ListCandidatesForExport :many
 -- Candidates in deterministic order for the review workbook, with the text of
 -- the section they came from (empty when the section is gone).
@@ -61,3 +70,10 @@ WHERE id = sqlc.arg(id) AND state = 'PENDING_REVIEW';
 -- name: InsertCandidateReview :exec
 INSERT INTO candidate_reviews (candidate_id, action, reviewer, before, after, source_file_name)
 VALUES ($1, $2, $3, $4, $5, $6);
+
+-- name: ListLiveCandidateSections :many
+-- The (ordinal, source_ref) of every section of a version that has a
+-- candidate in any state but STALE. Generation uses it to find Q&A rows that
+-- still need one.
+SELECT DISTINCT section_ordinal, source_ref FROM candidates
+WHERE file_version_id = $1 AND state <> 'STALE' AND section_ordinal IS NOT NULL;

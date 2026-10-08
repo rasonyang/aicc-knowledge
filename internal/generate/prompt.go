@@ -10,23 +10,46 @@ import (
 	"github.com/rasonyang/aicc-knowledge/internal/candidate"
 	"github.com/rasonyang/aicc-knowledge/internal/domain"
 	"github.com/rasonyang/aicc-knowledge/internal/llm"
+	"github.com/rasonyang/aicc-knowledge/internal/xlsx"
 )
 
 // PromptVersion identifies the prompt template below. It is stored on every
 // candidate. Bump it whenever the wording of the system prompt, the user
 // message or the schema changes, so a quality problem can be traced to the
 // revision that produced it.
-const PromptVersion = "faq-v1"
+//
+// faq-v2: the user message carries the document title and the heading path,
+// and may carry the text of preceding stub sections; the model is told to
+// return no entries when the section states no answer.
+const PromptVersion = "faq-v2"
+
+// Versions of the Q&A import. qa-import-v1 candidates are the sheet's own
+// text, verbatim, and have no model. qa-condense-v1 candidates keep the
+// question verbatim and have an answer the LLM shortened (condensePrompt).
+const (
+	QAImportVersion   = "qa-import-v1"
+	QACondenseVersion = "qa-condense-v1"
+)
 
 // Fixed generation limits.
 const (
 	// MaxCandidatesPerSection is how many Q&A pairs one section may yield.
 	MaxCandidatesPerSection = 5
-	// MinSectionChars: a section with less text than this (a heading and a
-	// few words) has nothing a caller could ask about and is not sent.
-	MinSectionChars = 20
-	// MaxSectionChars bounds the text sent to the LLM; the rest is cut.
-	MaxSectionChars = 6000
+	// MinMeaningfulChars: a section whose body, after its boilerplate lines
+	// (short "label: value" lines such as an applicable-products line) are
+	// removed, has fewer characters than this states nothing a caller could
+	// ask about. It is a stub: it is not sent on its own, and its heading and
+	// text are attached as context to the next section that is sent.
+	// A section whose heading is itself a question is exempt (see
+	// questionHeading): the heading is the question and a short body is its
+	// answer.
+	MinMeaningfulChars = 20
+	// MaxContextChars bounds the stub context attached to a section.
+	MaxContextChars = 600
+	// MaxSectionChars bounds the text sent to the LLM. Longer text is cut, and
+	// the cut is logged and counted. It equals xlsx.DefaultMaxChunkChars, so
+	// workbook chunks are never cut here.
+	MaxSectionChars = xlsx.DefaultMaxChunkChars
 )
 
 const schemaName = "faq_candidates"
@@ -62,7 +85,9 @@ func systemPrompt(lang domain.Language, lim candidate.Limits) string {
 You receive one section of a company document. Write up to %d question and answer pairs that a caller might really ask and that this section clearly answers.
 
 Rules:
-- Use only facts stated in the section. Never add, guess or generalize. If the section does not state the answer, do not write that question. Returning fewer entries, or an empty list, is correct when the section holds little.
+- Use only facts stated in the section text. Never add, guess or generalize, and never use the document title or the heading as a source of facts: they only tell you what the section is about. If the section text does not state the answer, do not write that question. Returning fewer entries, or an empty list, is correct when the section holds little; a section that only has a heading, or only a line such as "applicable products", has no answer and gets an empty list.
+- A heading that is itself a question, followed by a short statement, is a question and its answer: use the heading as the question and the statement as the answer.
+- "Context" lines, when present, come from earlier headings and lines of the same document that had no text of their own. They may help you understand the section, but write entries only about what the section text states.
 - Every question stands alone: never say "this section", "the document" or "above". Write it as a complete sentence with the normal capital letters and a question mark at the end. Questions must ask about different things; never repeat a question or reword it as another entry.
 - alternateQuestions holds 0 to %d other ways to ask the SAME question, as callers would say them. No new topics.
 - The answer is spoken aloud: ONE or TWO short sentences, at most %d characters. Plain words only: no Markdown, no lists, no bullet points, no headings, no tables, no URLs or web addresses, no emoji. State the key fact directly; do not copy sentences or paragraphs from the section.
@@ -78,22 +103,62 @@ func languageName(l domain.Language) string {
 	return "English"
 }
 
-func userPrompt(headingPath []string, body string) string {
-	if r := []rune(body); len(r) > MaxSectionChars {
-		body = string(r[:MaxSectionChars])
-	}
+// userPrompt renders the request for one section: the document title, the
+// heading path, optional context from stub sections, and the (already bounded)
+// text. The "Section heading: " line stays the first line: tests read it.
+func userPrompt(docTitle string, headingPath []string, context, body string) string {
 	heading := strings.Join(headingPath, " > ")
 	if heading == "" {
 		heading = "(none)"
 	}
-	return "Section heading: " + heading + "\nSection text:\n\"\"\"\n" + body + "\n\"\"\""
+	var b strings.Builder
+	b.WriteString("Section heading: " + heading + "\n")
+	if docTitle != "" {
+		b.WriteString("Document title: " + docTitle + "\n")
+	}
+	if context != "" {
+		b.WriteString("Context (earlier headings and lines without text of their own):\n" + context + "\n")
+	}
+	b.WriteString("Section text:\n\"\"\"\n" + body + "\n\"\"\"")
+	return b.String()
 }
 
 // messages builds the first request of a section.
-func messages(lang domain.Language, lim candidate.Limits, headingPath []string, body string) []llm.Message {
+func messages(lang domain.Language, lim candidate.Limits, docTitle string, headingPath []string, context, body string) []llm.Message {
 	return []llm.Message{
 		{Role: llm.RoleSystem, Content: systemPrompt(lang, lim)},
-		{Role: llm.RoleUser, Content: userPrompt(headingPath, body)},
+		{Role: llm.RoleUser, Content: userPrompt(docTitle, headingPath, context, body)},
+	}
+}
+
+const condenseSchemaName = "faq_condensed_answer"
+
+// condenseSchema is the JSON schema of the condense answer.
+var condenseSchema = map[string]any{
+	"type":                 "object",
+	"additionalProperties": false,
+	"required":             []string{"answer"},
+	"properties": map[string]any{
+		"answer": map[string]any{"type": "string"},
+	},
+}
+
+// condensePrompt asks for a short, speakable version of one curated answer
+// (qa-condense-v1). The question is given for context only and stays
+// verbatim in the candidate.
+func condenseMessages(lang domain.Language, lim candidate.Limits, question, answer string) []llm.Message {
+	sys := fmt.Sprintf(`You shorten answers for the knowledge base of a phone call center. A voice assistant reads the answer to a caller over the phone.
+
+You receive a question and the full, curated answer to it. Rewrite the answer so that it can be spoken.
+
+Rules:
+- Use only facts stated in the given answer. Never add, guess or generalize. Keep numbers, prices, dates, names and model names exactly as written.
+- ONE or TWO short sentences, at most %d characters. Plain words only: no Markdown, no lists, no bullet points, no line breaks, no tables, no URLs or web addresses, no emoji.
+- Keep the most important fact first. Turn a list into one short sentence that names the key items, or the most important ones.
+- Write in the same language as the answer (%s).`, lim.MaxAnswer(lang), languageName(lang))
+	return []llm.Message{
+		{Role: llm.RoleSystem, Content: sys},
+		{Role: llm.RoleUser, Content: "Question: " + question + "\nFull answer:\n\"\"\"\n" + answer + "\n\"\"\""},
 	}
 }
 

@@ -8,12 +8,17 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
+	"unicode/utf8"
+
+	"github.com/xuri/excelize/v2"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -586,5 +591,111 @@ func TestExtractExcludeSheets(t *testing.T) {
 	// Excluded sheets are not warned about: the caller handles them.
 	if len(c.Warnings) != 1 || c.Warnings[0].Code != CodeFormulaNoCachedValue {
 		t.Errorf("warnings = %+v", c.Warnings)
+	}
+}
+
+// workbook builds an in-memory workbook: sheet name -> rows of cell values.
+func workbookBytes(t *testing.T, sheets map[string][][]any) []byte {
+	t.Helper()
+	f := excelize.NewFile()
+	first := true
+	names := make([]string, 0, len(sheets))
+	for n := range sheets {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		if first {
+			if err := f.SetSheetName("Sheet1", n); err != nil {
+				t.Fatal(err)
+			}
+			first = false
+		} else if _, err := f.NewSheet(n); err != nil {
+			t.Fatal(err)
+		}
+		for r, vals := range sheets[n] {
+			for c, v := range vals {
+				if v == nil {
+					continue
+				}
+				ref, _ := excelize.CoordinatesToCellName(c+1, r+1)
+				if err := f.SetCellValue(n, ref, v); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	buf, err := f.WriteToBuffer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestExtractChunksBySizeNotOnlyRows(t *testing.T) {
+	long := strings.Repeat("word ", 100) // 500 characters
+	rows := [][]any{{"Question", "Answer"}}
+	for i := 0; i < 30; i++ {
+		rows = append(rows, []any{fmt.Sprintf("q%d", i), long})
+	}
+	data := workbookBytes(t, map[string][][]any{"Sheet": rows})
+	const limit = 2000
+	c, err := ExtractBytes(data, ExtractOptions{ChunkRows: 50, MaxChunkChars: limit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Sections) < 7 {
+		t.Fatalf("sections = %d, want the 30 long rows split by size (at least 7)", len(c.Sections))
+	}
+	rowsSeen := 0
+	next := 2
+	for _, s := range c.Sections {
+		if n := utf8.RuneCountInString(s.Text); n > limit {
+			t.Errorf("section %d has %d characters, over the limit %d", s.Ordinal, n, limit)
+		}
+		if !strings.HasPrefix(s.Text, "Question | Answer\n") {
+			t.Errorf("section %d lacks the repeated header", s.Ordinal)
+		}
+		if s.FirstRow != next {
+			t.Errorf("section %d starts at row %d, want %d (no gap, no overlap)", s.Ordinal, s.FirstRow, next)
+		}
+		next = s.LastRow + 1
+		rowsSeen += s.LastRow - s.FirstRow + 1
+	}
+	if rowsSeen != 30 {
+		t.Errorf("sections cover %d rows, want 30", rowsSeen)
+	}
+	if len(c.Warnings) != 0 {
+		t.Errorf("warnings = %+v, want none: every row fits a chunk", c.Warnings)
+	}
+}
+
+func TestExtractTruncatesAnOversizedRowWithAWarning(t *testing.T) {
+	huge := strings.Repeat("长文本", 400) // 1200 characters
+	data := workbookBytes(t, map[string][][]any{"Sheet": {{"Question", "Answer"}, {"short", "fine"}, {"big", huge}, {"after", "fine too"}}})
+	c, err := ExtractBytes(data, ExtractOptions{MaxChunkChars: 500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cut []Warning
+	for _, w := range c.Warnings {
+		if w.Code == CodeSectionTruncated {
+			cut = append(cut, w)
+		}
+	}
+	if len(cut) != 1 || cut[0].Row != 3 || !strings.Contains(cut[0].Location, "Sheet!A3") {
+		t.Fatalf("truncation warnings = %+v, want exactly one for row 3", cut)
+	}
+	all := ""
+	for _, s := range c.Sections {
+		if n := utf8.RuneCountInString(s.Text); n > 500 {
+			t.Errorf("section %d has %d characters", s.Ordinal, n)
+		}
+		all += s.Text + "\n"
+	}
+	for _, want := range []string{"short | fine", "big | 长文本", "after | fine too"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("rows lost: %q missing", want)
+		}
 	}
 }

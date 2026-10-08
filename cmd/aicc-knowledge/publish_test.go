@@ -73,7 +73,7 @@ func TestOperatorWorkflowThroughTheCLI(t *testing.T) {
 		if strings.ContainsAny(heading, "账单退款套餐") {
 			return llmtest.Reply(llmtest.Cand{Question: "关于" + heading + "有什么规定？", Answer: "请参阅" + heading + "的规定。", Language: "ZH"}), nil
 		}
-		return llmtest.Reply(llmtest.Cand{Question: "What is the " + heading + " policy?", Answer: "The " + heading + " policy is in the handbook.", Language: "EN"}), nil
+		return llmtest.Reply(llmtest.Cand{Question: "What is the " + heading + " policy?", Answer: "The policy is in the handbook.", Language: "EN"}), nil
 	})
 	prefix := fmt.Sprintf("cli%d_faq_", time.Now().UnixNano())
 	t.Setenv("KB_DATABASE_URL", testdb.ScratchDSN(t, "cmdpublish"))
@@ -173,7 +173,7 @@ func TestOperatorWorkflowThroughTheCLI(t *testing.T) {
 	}
 
 	// The English source changes; the new version is approved and published.
-	env.Put("acme/faq_en.docx", parsetest.Fixture(t, "docx/headings.docx"))
+	env.Put("acme/faq_en.docx", parsetest.Fixture(t, "docx/stubs.docx"))
 	step(exitOK, "scan")
 	step(exitOK, "parse")
 	step(exitOK, "generate")

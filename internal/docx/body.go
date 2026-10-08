@@ -131,6 +131,12 @@ func (b *builder) paragraph(p *node, txt string) {
 	lvl := b.headingLevel(p)
 	if lvl > 0 {
 		if h := cleanHeading(txt); h != "" {
+			if sentenceLike(h) {
+				b.warn(WarnHeadingDemoted, "outline-level paragraph reads as a sentence, kept as body text: "+truncateRunes(h, 30),
+					"body#p"+strconv.Itoa(b.paraIdx))
+				b.addParagraph(txt)
+				return
+			}
 			b.startSection(lvl, h)
 			return
 		}
@@ -144,9 +150,14 @@ func (b *builder) startSection(level int, text string) {
 	}
 	b.stack = append(b.stack, pathEntry{level, text})
 	b.ordinal++
-	path := make([]string, len(b.stack))
-	for i, e := range b.stack {
-		path[i] = e.text
+	// Consecutive identical entries collapse: a document title that is also
+	// repeated as a lower-level heading appears once in the path.
+	path := make([]string, 0, len(b.stack))
+	for _, e := range b.stack {
+		if len(path) > 0 && path[len(path)-1] == e.text {
+			continue
+		}
+		path = append(path, e.text)
 	}
 	b.cur = &Section{
 		Ordinal:     b.ordinal,
@@ -326,4 +337,31 @@ func (b *builder) cellText(tc *node) string {
 	}
 	flush()
 	return strings.Join(parts, "\n")
+}
+
+// maxHeadingRunes is the longest text that still reads as a heading.
+const maxHeadingRunes = 40
+
+// sentenceLike reports whether an outline-level paragraph is really a
+// sentence: longer than maxHeadingRunes, or ending in sentence punctuation
+// (。！.!). A short question (ending in ？ or ?) stays a heading, because the
+// FAQ question is the heading of its answer. Word processors that style whole
+// intro and closing sentences with an outline level produce these.
+func sentenceLike(h string) bool {
+	r := []rune(h)
+	if len(r) > maxHeadingRunes {
+		return true
+	}
+	switch r[len(r)-1] {
+	case '。', '！', '.', '!':
+		return true
+	}
+	return false
+}
+
+func truncateRunes(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "..."
+	}
+	return s
 }

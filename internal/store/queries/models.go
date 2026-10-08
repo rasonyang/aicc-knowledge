@@ -117,6 +117,9 @@ type ParsedSection struct {
 	Level         int32     `json:"level"`
 	Body          string    `json:"body"`
 	SourceRef     string    `json:"sourceRef"`
+	QaQuestion    *string   `json:"qaQuestion"`
+	QaAlternates  []string  `json:"qaAlternates"`
+	QaLanguage    *string   `json:"qaLanguage"`
 }
 
 type Publication struct {
