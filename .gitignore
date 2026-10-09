@@ -40,3 +40,4 @@ bin/
 
 # Benchmark output
 bench-results/
+llama-server.log
