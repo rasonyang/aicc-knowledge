@@ -1,0 +1,52 @@
+{
+  "sections": [
+    {
+      "ordinal": 1,
+      "headingPath": [
+        "Plans"
+      ],
+      "text": "Category | Plan | Price | Discount | Start\nMobile | Basic | 9.9 | 15% | 2024-01-01\nMobile | Plus | 19.9 | 10% | 2024-01-01\nMobile | Max | 39.9 | 5% | 2024-03-01",
+      "firstRow": 2,
+      "lastRow": 4,
+      "sourceRef": "Plans!A2:E4"
+    },
+    {
+      "ordinal": 2,
+      "headingPath": [
+        "Plans"
+      ],
+      "text": "Category | Plan | Price | Discount | Start\nBroadband | 100M | 79 |  | 2024-01-01\nBroadband | 1G | 199 |  | 2024-06-01\nOther | Line with newline | 1 |  | ",
+      "firstRow": 5,
+      "lastRow": 9,
+      "sourceRef": "Plans!A5:E9"
+    },
+    {
+      "ordinal": 3,
+      "headingPath": [
+        "Calc"
+      ],
+      "text": "x | double | note\n2 | 4 | cached\n3 |  | not cached",
+      "firstRow": 2,
+      "lastRow": 3,
+      "sourceRef": "Calc!A2:C3"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "HIDDEN_ROW_SKIPPED",
+      "detail": "hidden row 6 excluded",
+      "location": "Plans!A6:E6",
+      "row": 6
+    },
+    {
+      "code": "SHEET_HIDDEN_SKIPPED",
+      "detail": "hidden sheet excluded",
+      "location": "Archive"
+    },
+    {
+      "code": "FORMULA_NO_CACHED_VALUE",
+      "detail": "formula has no cached value; rendered empty",
+      "location": "Calc!B3"
+    }
+  ]
+}

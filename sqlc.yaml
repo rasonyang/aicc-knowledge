@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+version: "2"
+sql:
+  - engine: postgresql
+    schema: internal/store/migrations
+    queries: internal/store/sql
+    gen:
+      go:
+        package: queries
+        out: internal/store/queries
+        sql_package: pgx/v5
+        emit_json_tags: true
+        emit_pointers_for_null_types: true
+        emit_empty_slices: true
+        json_tags_case_style: camel
+        rename:
+          api_key: "APIKey"
+          api_keys: "APIKeys"
+          sha256: "SHA256"
+          key_hash: "KeyHash"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+          - db_type: "uuid"
+            nullable: true
+            go_type: {type: "UUID", import: "github.com/google/uuid", pointer: true}

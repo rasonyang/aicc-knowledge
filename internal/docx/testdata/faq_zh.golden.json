@@ -1,0 +1,47 @@
+{
+  "sections": [
+    {
+      "ordinal": 1,
+      "headingPath": [
+        "账单与缴费"
+      ],
+      "level": 1,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "账单于每月1日出具，请在15天内缴清。逾期未缴的，按未缴金额的百分之二收取滞纳金。您可以通过银行卡、银行转账或任意营业厅柜台缴费。"
+        }
+      ],
+      "sourceRef": "账单与缴费#1"
+    },
+    {
+      "ordinal": 2,
+      "headingPath": [
+        "退款"
+      ],
+      "level": 1,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "购买后三十天内可以申请退款。审核通过的退款会在五到七个工作日内退回原支付方式。服务费不予退还。"
+        }
+      ],
+      "sourceRef": "退款#2"
+    },
+    {
+      "ordinal": 3,
+      "headingPath": [
+        "套餐价格"
+      ],
+      "level": 1,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "基础套餐每月9.9元，包含10GB流量；加强套餐每月19.9元，包含50GB流量；旗舰套餐每月39.9元，流量不限量。"
+        }
+      ],
+      "sourceRef": "套餐价格#3"
+    }
+  ],
+  "warnings": []
+}

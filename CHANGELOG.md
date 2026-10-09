@@ -1,0 +1,84 @@
+# Changelog
+
+All notable changes to aicc-knowledge are recorded here, newest first.
+
+## Unreleased
+
+### Added (product catalog and search guard)
+
+- `products.yaml` at the root of `KB_S3_PREFIX` is the product catalog (strict YAML: `products: [{id, names, compatibleWith?}]`). Scan classifies it; parse validates it (unique ids, unique normalized names across products, `compatibleWith` naming known products) and stores it in `product_catalogs` (migration 00014) per file version: `PARSED`, or `PARSE_FAILED` with `CATALOG_INVALID`. A `products.yaml` anywhere else fails `CATALOG_MISPLACED`.
+- `internal/products`: NFKC, case, hyphen and whitespace normalization, Chinese numerals after a Latin word as digits, longest-match extraction with alphanumeric boundaries, lists, symmetric compatibility, and the model-token detector shared with the figure rule.
+- Publish tags each document with the products its question and alternates name, else its source file name names, else none; `publication_items.products` and `publications.catalog_id` snapshot them (rollback serves the same tags); the index documents carry `products`. A catalog file that exists but is not `PARSED` refuses the publish (`CATALOG_UNAVAILABLE`).
+- Search guard (only when the live publication has a catalog): drop hits about other products than the question names (compatible products count), `NO_MATCH` for an uncovered model-like token of a known product family (leading Latin word of an alias; iOS17, USB3, mp4 are not), and a generic-hit margin (`KB_SEARCH_GENERIC_MARGIN_ZH` 0.04, `KB_SEARCH_GENERIC_MARGIN_EN` 0). `serve` loads each language's live catalog at startup and every `KB_PRODUCTS_REFRESH_SEC` (default 30), so a search never queries PostgreSQL; counter `kb_product_guard_total{language,outcome}`.
+- `eval` uses the live catalog when `KB_DATABASE_URL` is set, reports the guard counts, and `--sweep` also sweeps the generic margin (0, 0.02, 0.04, 0.06).
+
+### Changed
+
+- `KB_SEARCH_THRESHOLD_ZH` defaults to 0.875 (was 0.85), calibrated offline on a private real sample together with the guard (research caveat C4).
+
+### Added (Q&A workbook direct import)
+
+- `<name>.qa.yaml` next to `<name>.xlsx` maps the question, answer and alternate-question columns of a sheet (`sheets: [{sheet, headerStartRow?, headerRows, question, answer, alternates?, language?}]`, strict YAML). Scan classifies it like a facts mapping. Parse writes one `XLSX_QA_ROW` section per row (source reference `<objectKey>#<Sheet>!A<row>`), skips hidden rows (`HIDDEN_ROW_SKIPPED`) and rows with an empty question or answer (`QA_ROW_INCOMPLETE`), and excludes the covered sheets from content sections. A sheet named by both a facts and a Q&A mapping fails the workbook `QA_SHEET_CONFLICT`; a sheet or header missing from the workbook fails it `QA_INVALID`. Migration 00013 (`parsed_sections.qa_question`, `qa_alternates`, `qa_language`, kind `XLSX_QA_ROW`).
+- `generate` imports Q&A rows without the LLM (`prompt_version` `qa-import-v1`, empty model). An answer that fails only for length, line breaks or Markdown gets one `qa-condense-v1` call that shortens it from that row's answer alone, under the figure-grounding rule; other failures drop the row with a warning. Editing the mapping stales the candidates of changed rows (`QA_ROW_CHANGED`) and tops up only those rows.
+
+### Fixed (final validation findings)
+
+- Products: a bare family alias (`ZQ`, `Nova`) no longer hides an unlisted model. When it is directly followed by a model suffix (`ZQ 5`, `ZQ五`, `Nova 7 Pro`) that no alias covers, the span is an unknown model of a known family and search answers `NO_MATCH` (R2); `ZQ 3`, `ZQ 3S`, `ZQ Ultra`, `ZQ 系列` and a lone `ZQ` match as before.
+- Generate: a curated Q&A row whose condensed answer is still unusable (too long, ungrounded figure, cut-off or invalid output) is no longer dropped. It is kept as `PENDING_REVIEW` with the original answer, the new flag `NEEDS_SHORTENING` (migration 00015), `qa-import-v1` and no model, and counted as `QA_NEEDS_SHORTENING`. Review: `APPROVE` on it is refused (`SHORTENING_REQUIRED`); `EDIT` is validated normally and clears the flag; `REJECT` is unchanged. Rows invalid for other reasons are still dropped with a warning.
+
+### Fixed (validation findings)
+
+- Search: the searcher no longer sends `rankingScoreThreshold`. Meilisearch took a much slower path when fewer than `limit` hits cleared it; the threshold is applied to the hits in the searcher, and `meili.VectorSearch` omits it when it is 0.
+- Generate: the length gate counts heading and body; a question heading with a short answer is sent; stub sections (title or boilerplate only) are not sent and become context of the next section; every prompt has the document title and heading path; prompt `faq-v2` returns nothing when the section states no answer; an answer figure not in the source is dropped (`UNGROUNDED_FIGURE`); skipped and truncated sections are logged and counted (`SKIPPED_STUB`, `SKIPPED_NO_LANGUAGE`, `TRUNCATED`) and printed in the summary.
+- `candidate.DetectLanguage` no longer reads Chinese with many Latin product names as English.
+- `.xlsx` content is chunked by size (6000 characters, header repeated) instead of only by 50 rows; an oversized row is cut with `SECTION_TRUNCATED`.
+- `CONTAINS_FIGURES` no longer fires on letter-first model names (`K5`, `ZQ 3S`).
+- `generate --version <id>` processes only that version's job instead of draining the queue.
+- Docx: outline-level paragraphs that read as sentences (over 40 characters, or ending in `。！.!`) are body text with a `HEADING_DEMOTED` warning; consecutive identical heading entries collapse.
+
+### Added (licenses)
+
+- `THIRD_PARTY_LICENSES`: license texts and NOTICE files of the modules compiled into the binary, generated by `make licenses` (`scripts/licenses.sh`, go-licenses v2.0.1 over `./cmd/aicc-knowledge`; fails on a license outside Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0). `make licenses-check` runs in CI and fails when the file is stale. NOTICE now carries the Prometheus client_model and common and gRPC-Go notices. The image ships LICENSE, NOTICE and THIRD_PARTY_LICENSES in `/licenses`.
+
+### Added (M5: publish, rollback, search, eval)
+
+- `publish -language EN|ZH|ALL [-allow-empty]`: one publication per language run, under a PostgreSQL advisory lock shared with `rollback`. In one REPEATABLE READ transaction it snapshots the APPROVED candidates of current, non-removed file versions into `publication_items` (question, alternates, answer, source reference, scope, content hash), embeds the distinct question phrasings in small serial batches (`internal/embed` batch path, optionally on a second TEI, `KB_TEI_BATCH_URL`), builds the staging index `faq_<lang>_<id>` (userProvided embedder of `KB_EMBEDDING_DIMENSIONS`, searchable question, alternate questions and answer, filterable `scope.<key>`), waits for every Meilisearch task, verifies the index holds exactly the snapshot, swaps it with the live uid and waits for the swap, and only then flips `BUILDING -> LIVE` and `LIVE -> SUPERSEDED` in one transaction. Any failure marks the publication `FAILED` with an error code, deletes the staging index and leaves the live index and LIVE row untouched; a database failure after the swap undoes the swap. The first publication of a language renames the staging index onto the absent live uid (`rename: true`). Emptying a non-empty live index needs `-allow-empty`; with nothing approved and nothing live the run is a no-op. Stale `BUILDING` rows of a dead run are failed (`PUBLISH_ABANDONED`) at the next publish.
+- One vector per distinct phrasing of a question (`_vectors.default` as an array of arrays; Meilisearch scores a document by its best vector, verified live).
+- `rollback -language EN|ZH [-to <id>]`: the target must be SUPERSEDED (default: the most recently superseded). A retained index that holds exactly the target's documents is swapped in; a pruned or mismatching one is rebuilt from `publication_items` (re-embedding the snapshot, not the current candidates). `SUPERSEDED -> LIVE` and `LIVE -> SUPERSEDED` happen in one transaction after the swap task succeeded.
+- `publications.content_uid` records which Meilisearch uid holds each publication's documents (a swap moves content between uids); retention (`KB_PUBLISH_RETAIN_INDEXES`, default 3) deletes the indexes of older SUPERSEDED publications and clears their `content_uid`; rows and items are kept forever. Migration 00012 (also `publication_items.scope`).
+- Scope from the S3 path: `KB_S3_SCOPE_PATH_TEMPLATE` (for example `{brand}/{channel}`, validated at startup against `KB_SEARCH_SCOPE_KEYS`). A document without a value for a scope key is global for that key: the filter is `(scope.k = "v" OR scope.k NOT EXISTS)`.
+- `POST /v1/search` is implemented (`internal/search`, shared with `eval`): embeds the query once, runs a pure-vector search on `faq_<lang>` with the language's threshold, scope filter and `topK`, and answers HIT or NO_MATCH. The `timeoutMs` budget (default and cap from configuration) covers embedding and search: 504 `UPSTREAM_TIMEOUT`; TEI or Meilisearch unreachable: 503 `UPSTREAM_UNAVAILABLE`; no live index: 503 `INDEX_UNAVAILABLE`. `latencyMs` uses monotonic clocks and feeds the per-stage histograms (labels language and status, where status is HIT, NO_MATCH or the error code). No per-request database lookup of the LIVE publication (the live uid only holds published content). Meilisearch is asked for at least 10 hits and the first `topK` are kept, because a filtered vector search with a tiny limit was occasionally approximate. The query-path Meilisearch client opens a connection per search: reused connections stalled about 40 ms in the compose stack.
+- `eval -in questions.csv [-language] [-url -api-key] [-json] [-sweep] [-min-precision]`: recall@3, NO_MATCH precision and recall, per-stage latency p50 and p90, in process by default or over HTTP; `-sweep` reports thresholds 0.50 to 0.95 in steps of 0.025 and the best row at the requested NO_MATCH precision.
+- Config `KB_TEI_BATCH_URL`, `KB_EMBEDDING_DIMENSIONS` (1024), `KB_S3_SCOPE_PATH_TEMPLATE`, `KB_PUBLISH_RETAIN_INDEXES` (3), `KB_MEILI_INDEX_PREFIX` (`faq_`). Metrics `kb_publish_total`, `kb_publish_seconds`, `kb_rollback_total`.
+
+### Changed (M5)
+
+- `KB_SEARCH_THRESHOLD_EN` / `_ZH` default to 0.85 / 0.85 (were a 0.75 placeholder), from a first `eval --sweep` on a small synthetic sample (EN raised from the sweep's 0.825 so a wrong spoken answer is less likely than a NO_MATCH); re-calibrate on real data (research caveat C4).
+- Contract: the search description and `scope` describe the budget, the error mapping and global documents (descriptions only).
+- `publish`, `rollback` and `eval` no longer exit 3 "not implemented"; the milestone mechanism of the CLI is gone.
+
+### Added (M4: generate and review)
+
+- `generate`: drains `GENERATE` jobs (queued by every successful parse that yields sections, deduped per file version; `--watch`, `--version <id>`). Each section goes to an OpenAI-compatible LLM (`internal/llm`, JSON schema `response_format`, bounded retries, coded errors `UPSTREAM_TIMEOUT`, `UPSTREAM_UNAVAILABLE`, `LLM_OUTPUT_INVALID`; the output is checked against the schema in Go, never trusted from the server). Prompt `faq-v1`: up to 5 Q&A per section, short speakable answers. Deterministic post-validation (`internal/candidate`): length limits per language, no Markdown or URLs, language matches the section's script, duplicate questions dropped across the version; one retry with the problems fed back, then invalid candidates are dropped with a warning (log and metric). `CONTAINS_FIGURES` is computed in code from digits, percent, currency and Chinese numerals used as quantities. All candidates of a version are inserted in one transaction; re-running never duplicates. Candidates whose section disappears when sections are re-derived (a facts mapping arrives) become `STALE` with `review_note` `SECTION_WITHDRAWN`.
+- `export-review` writes a protected Excel workbook (locked `id`, hidden `contentHash`, `action` dropdown `APPROVE | REJECT | EDIT`, editable question, alternates, answer and note, source excerpt, frozen header). `import-review --reviewer <name>` applies it in one transaction with per-row outcomes: rows whose source changed since the export are refused `STALE`, an `APPROVE` whose text was edited is refused `EDIT_REQUIRES_EDIT_ACTION`, `EDIT` means approve-with-edits (re-validated, flags and hash recomputed), a second import reports `NOT_PENDING`. Every applied decision is written to the new `candidate_reviews` audit table. Exit code 1 when any row was refused.
+- Config `KB_LLM_TIMEOUT_MS`, `KB_LLM_TEMPERATURE`, `KB_LLM_SEED`, `KB_GENERATE_MAX_ANSWER_CHARS_EN` (240), `KB_GENERATE_MAX_ANSWER_CHARS_ZH` (90). Metrics `kb_generate_candidates_total`, `kb_generate_sections_total`, `kb_llm_request_seconds`, `kb_review_rows_total`.
+- Migrations 00010 (candidates remember section ordinal, prompt version, model and generation time; unique `(file_version_id, content_hash)`) and 00011 (`candidate_reviews`). Fixtures `faq_en.docx` and `faq_zh.docx` (call-center billing, refunds, plan prices).
+
+### Changed
+
+- Scan: an object larger than `KB_S3_MAX_OBJECT_BYTES` is no longer ignored (which turned an existing file that grew past the cap into `REMOVED`). It is streamed through SHA-256 without buffering and versioned `UNSUPPORTED` with `parse_error_code` `OBJECT_TOO_LARGE` and no parse job. A superseded or removed version now clears the import pointer of the fact tables it fed.
+- Contract: `FACT_TABLE_UNAVAILABLE` (503) joins the `ErrorCode` enum; the facts lookup documents key coercion, the default `at` (today in `KB_TIMEZONE`) and its error cases. A `NOT_FOUND` answer carries explicit nulls for `row`, `sourceRef`, `validFrom` and `validTo`.
+- `/readyz` probes TEI at `/info` instead of `/health`: TEI's `/health` runs an inference and took 15 s under load, which would flap readiness exactly when the service is busiest.
+- Contract: `SearchItem.score` documents the (1 + cosine) / 2 score floor (an unrelated document still scores about 0.5) and that callers decide on `status`, not on `score`; `SearchResponse.status` documents the server-side per-index NO_MATCH threshold. Scores are unmodified.
+- File version state machine gains the explicit retry edge `PARSE_FAILED → DISCOVERED` (operator-triggered; content stays immutable).
+
+### Added
+
+- Parse (M3): `parse` subcommand turning `DISCOVERED` versions into `PARSED` (sections in `parsed_sections`, warnings in `parse_warnings`) or `PARSE_FAILED` with a coded reason (`DOCX_CORRUPT`, `XLSX_CORRUPT`, `UNSUPPORTED_FORMAT`, `MAPPING_INVALID`, `FACTS_INVALID`, `FACT_TABLE_NAME_CONFLICT`, `OBJECT_TOO_LARGE`); workbook data problems fail the workbook (`FACTS_INVALID`), never the mapping. Superseded, removed or changed-since-scan versions are skipped. `parse --retry-failed` resets `PARSE_FAILED` versions and re-arms their jobs; `--watch` keeps polling.
+- Structured facts: `<name>.facts.yaml` next to `<name>.xlsx` maps sheets to typed fact tables (`fact_tables`, `fact_rows`, no runtime DDL) with an import pointer that is cleared whenever a source is superseded, removed or invalid. `POST /v1/facts/{table}/lookup` answers `FOUND`, `NOT_FOUND`, 404, 422 and 503 `FACT_TABLE_UNAVAILABLE`; the default date uses the new `KB_TIMEZONE`.
+- Metrics `kb_parse_jobs_total`, `kb_parse_seconds`, `kb_facts_lookups_total`.
+- Scan (M2): incremental S3 scan over ListObjectsV2 with SHA-256 content identity, immutable versions, `REMOVED` on deletion with candidates turned `STALE`, `UNSUPPORTED_FORMAT` for other formats, and a PostgreSQL job queue (`FOR UPDATE SKIP LOCKED`, leases, retries, dedupe). `scan` subcommand.
+- Parser libraries `internal/docx` (stdlib; headings from `outlineLvl` only; tracked changes accepted) and `internal/xlsx` (excelize; merged cells, multi-row headers, hidden rows warned, uncached formulas warned; typed facts mapping), with generated fixtures and golden tests.
+- Clients `internal/embed` (TEI) and `internal/meili` (Meilisearch).
+- Scaffold (M1): OpenAPI 3.1 contract for `POST /v1/search` and `POST /v1/facts/{table}/lookup`, chi server with bearer API keys, ops listener (`/metrics`, `/healthz`, `/readyz`), goose migrations for the initial schema, domain state machines, `serve`, `version` and `create-api-key` subcommands, dev compose stack, CI.
+- Search answers 503 `INDEX_UNAVAILABLE` until a publication is live, and facts lookup answers 404 `FACT_TABLE_NOT_FOUND` until a fact table is imported.

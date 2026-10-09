@@ -1,0 +1,112 @@
+{
+  "sections": [
+    {
+      "ordinal": 1,
+      "headingPath": [
+        "Acme Widget Guide"
+      ],
+      "level": 1,
+      "blocks": [],
+      "sourceRef": "Acme Widget Guide#1"
+    },
+    {
+      "ordinal": 2,
+      "headingPath": [
+        "Acme Widget Guide"
+      ],
+      "level": 3,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "Welcome to the Acme Widget Guide. Please read the sections below before use."
+        }
+      ],
+      "sourceRef": "Acme Widget Guide#2"
+    },
+    {
+      "ordinal": 3,
+      "headingPath": [
+        "Acme Widget Guide",
+        "Setup"
+      ],
+      "level": 2,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "Plug the widget in and press the green button."
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "这是一段很长的介绍文字，它被错误地设置了大纲级别，所以应该被当作正文处理而不是标题，因为它超过了四十个字符的上限"
+        }
+      ],
+      "sourceRef": "Acme Widget Guide > Setup#3"
+    },
+    {
+      "ordinal": 4,
+      "headingPath": [
+        "Acme Widget Guide",
+        "如何清洁屏幕？"
+      ],
+      "level": 2,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "每周清洁一次即可。"
+        }
+      ],
+      "sourceRef": "Acme Widget Guide > 如何清洁屏幕？#4"
+    },
+    {
+      "ordinal": 5,
+      "headingPath": [
+        "Acme Widget Guide",
+        "Does it work offline?"
+      ],
+      "level": 2,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "Yes."
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "谢谢您的阅读！"
+        }
+      ],
+      "sourceRef": "Acme Widget Guide > Does it work offline?#5"
+    },
+    {
+      "ordinal": 6,
+      "headingPath": [
+        "Acme Widget Guide",
+        "Version 2.0"
+      ],
+      "level": 2,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "Released last year."
+        }
+      ],
+      "sourceRef": "Acme Widget Guide > Version 2.0#6"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "HEADING_DEMOTED",
+      "detail": "outline-level paragraph reads as a sentence, kept as body text: Welcome to the Acme Widget Gui...",
+      "location": "body#p3"
+    },
+    {
+      "code": "HEADING_DEMOTED",
+      "detail": "outline-level paragraph reads as a sentence, kept as body text: 这是一段很长的介绍文字，它被错误地设置了大纲级别，所以应该被...",
+      "location": "body#p6"
+    },
+    {
+      "code": "HEADING_DEMOTED",
+      "detail": "outline-level paragraph reads as a sentence, kept as body text: 谢谢您的阅读！",
+      "location": "body#p11"
+    }
+  ]
+}

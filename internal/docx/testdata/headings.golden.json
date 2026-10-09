@@ -1,0 +1,133 @@
+{
+  "sections": [
+    {
+      "ordinal": 0,
+      "headingPath": [],
+      "level": 0,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "前言段落，位于第一个标题之前。"
+        }
+      ],
+      "sourceRef": "#0"
+    },
+    {
+      "ordinal": 1,
+      "headingPath": [
+        "第一章 概述"
+      ],
+      "level": 1,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "概述正文。"
+        }
+      ],
+      "sourceRef": "第一章 概述#1"
+    },
+    {
+      "ordinal": 2,
+      "headingPath": [
+        "第一章 概述",
+        "1.1 背景"
+      ],
+      "level": 2,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "背景正文。"
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "Heading 1 trap: styled like a heading but has no outlineLvl"
+        }
+      ],
+      "sourceRef": "第一章 概述 > 1.1 背景#2"
+    },
+    {
+      "ordinal": 3,
+      "headingPath": [
+        "第二章 价格"
+      ],
+      "level": 1,
+      "blocks": [],
+      "sourceRef": "第二章 价格#3"
+    },
+    {
+      "ordinal": 4,
+      "headingPath": [
+        "第二章 价格",
+        "2.1 套餐"
+      ],
+      "level": 2,
+      "blocks": [],
+      "sourceRef": "第二章 价格 > 2.1 套餐#4"
+    },
+    {
+      "ordinal": 5,
+      "headingPath": [
+        "第二章 价格",
+        "2.1 套餐",
+        "2.1.1 月费"
+      ],
+      "level": 3,
+      "blocks": [],
+      "sourceRef": "第二章 价格 > 2.1 套餐 > 2.1.1 月费#5"
+    },
+    {
+      "ordinal": 6,
+      "headingPath": [
+        "第二章 价格",
+        "2.1 套餐",
+        "2.1.2 直接覆盖"
+      ],
+      "level": 3,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "样式是标题 1，但直接大纲级别为 9，所以是正文"
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "BodyH2 style has outlineLvl 9: body text"
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "cyclic basedOn chain: body text"
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "undefined style: body text"
+        }
+      ],
+      "sourceRef": "第二章 价格 > 2.1 套餐 > 2.1.2 直接覆盖#6"
+    },
+    {
+      "ordinal": 7,
+      "headingPath": [
+        "附录"
+      ],
+      "level": 1,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "附录正文。"
+        }
+      ],
+      "sourceRef": "附录#7"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "STYLE_CYCLE",
+      "detail": "basedOn cycle through style CycA starting at CycA",
+      "location": "styles.xml#style:CycA"
+    },
+    {
+      "code": "STYLE_NOT_FOUND",
+      "detail": "style Missing is not defined",
+      "location": "styles.xml#style:Missing"
+    }
+  ]
+}

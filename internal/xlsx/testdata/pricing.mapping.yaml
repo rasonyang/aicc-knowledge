@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+table: plan_prices
+sheet: Pricing
+headerRows: 2
+columns:
+  - name: plan
+    header: Plan
+    type: STRING
+  - name: monthly_price
+    header: Price / Monthly
+    type: DECIMAL
+    unit: CNY
+    required: true
+  - name: yearly_price
+    header: Price / Yearly
+    type: DECIMAL
+    unit: CNY
+  - name: data_gb
+    header: Data (GB)
+    type: INTEGER
+    unit: GB
+  - name: unlimited
+    header: Unlimited
+    type: BOOLEAN
+  - name: valid_from
+    header: Validity / From
+    type: DATE
+  - name: valid_to
+    header: Validity / To
+    type: DATE
+keyColumns: [plan]
+validFrom: valid_from
+validTo: valid_to

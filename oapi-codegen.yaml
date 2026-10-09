@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+package: api
+generate:
+  models: true
+  chi-server: true
+output: internal/api/api.gen.go
+output-options:
+  name-normalizer: ToCamelCaseWithInitialisms
+  additional-initialisms: [ID, IDs, URL, TEI, EN, ZH]
+compatibility:
+  always-prefix-enum-values: true

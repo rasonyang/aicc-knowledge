@@ -1,0 +1,67 @@
+{
+  "sections": [
+    {
+      "ordinal": 1,
+      "headingPath": [
+        "Pricing"
+      ],
+      "level": 1,
+      "blocks": [
+        {
+          "kind": "PARAGRAPH",
+          "text": "Before table."
+        },
+        {
+          "kind": "TABLE",
+          "text": "Plan | Price | Price\nPlan | Monthly | Yearly\nBasic | 10 | 100\nPro | 20; (promo) | a\\|b",
+          "table": {
+            "rows": [
+              [
+                "Plan",
+                "Price",
+                "Price"
+              ],
+              [
+                "Plan",
+                "Monthly",
+                "Yearly"
+              ],
+              [
+                "Basic",
+                "10",
+                "100"
+              ],
+              [
+                "Pro",
+                "20\n(promo)",
+                "a|b"
+              ]
+            ]
+          }
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "Between tables."
+        },
+        {
+          "kind": "TABLE",
+          "text": "Outer A | Inner intro; x \\| y; 1 \\| 2",
+          "table": {
+            "rows": [
+              [
+                "Outer A",
+                "Inner intro\nx | y\n1 | 2"
+              ]
+            ]
+          }
+        },
+        {
+          "kind": "PARAGRAPH",
+          "text": "After tables."
+        }
+      ],
+      "sourceRef": "Pricing#1"
+    }
+  ],
+  "warnings": []
+}
