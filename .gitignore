@@ -37,3 +37,6 @@ bin/
 
 # macOS
 .DS_Store
+
+# Benchmark output
+bench-results/

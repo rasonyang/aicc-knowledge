@@ -38,6 +38,7 @@ const (
 	CodeStale                  = "STALE"
 	CodeEditRequiresEditAction = "EDIT_REQUIRES_EDIT_ACTION"
 	CodeInvalidEdit            = "INVALID_EDIT"
+	CodeShorteningRequired     = "SHORTENING_REQUIRED"
 	CodeInvalidAction          = "INVALID_ACTION"
 	CodeDuplicateContent       = "DUPLICATE_CONTENT"
 	CodeReviewFileInvalid      = "REVIEW_FILE_INVALID"
@@ -283,6 +284,9 @@ func applyRow(ctx context.Context, q *queries.Queries, row sheetRow, reviewer, f
 
 	switch action {
 	case domain.ReviewApprove:
+		if slices.Contains(c.Flags, string(domain.FlagNeedsShortening)) {
+			return refuse(row, CodeShorteningRequired, "the answer is too long to publish as it is; choose EDIT and shorten it, or REJECT"), nil
+		}
 		cells := contentOf(c, candidate.Clean(row.question), splitAlternates(row.alts), candidate.Clean(row.answer))
 		if h := candidate.ContentHash(cells); !bytes.Equal(h[:], c.ContentHash) {
 			return refuse(row, CodeEditRequiresEditAction, "the text differs from the export; choose EDIT to approve it with your changes"), nil

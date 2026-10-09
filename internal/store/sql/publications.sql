@@ -26,7 +26,7 @@ UPDATE publications SET state = 'FAILED', error_code = $2, content_uid = NULL
 WHERE id = $1 AND state = 'BUILDING';
 
 -- name: ListBuildingPublications :many
-SELECT * FROM publications WHERE language = $1 AND state = 'BUILDING' ORDER BY created_at;
+SELECT * FROM publications WHERE language = $1 AND state = 'BUILDING' ORDER BY seq;
 
 -- name: LockLivePublication :one
 SELECT * FROM publications WHERE language = $1 AND state = 'LIVE' FOR UPDATE;
@@ -40,19 +40,20 @@ UPDATE publications SET content_uid = sqlc.narg(content_uid) WHERE id = sqlc.arg
 -- name: SupersedePublication :execrows
 -- LIVE -> SUPERSEDED. content_uid is where the content lives now (NULL when no
 -- index holds it).
-UPDATE publications SET state = 'SUPERSEDED', superseded_at = now(), content_uid = sqlc.narg(content_uid)
+UPDATE publications SET state = 'SUPERSEDED', superseded_at = now(), superseded_seq = nextval('publication_superseded_seq'), content_uid = sqlc.narg(content_uid)
 WHERE id = sqlc.arg(id) AND state = 'LIVE';
 
 -- name: PromotePublication :execrows
 -- BUILDING -> LIVE (publish) or SUPERSEDED -> LIVE (rollback). The caller has
 -- checked the edge, and demoted the current LIVE row first.
-UPDATE publications SET state = 'LIVE', live_at = now(), superseded_at = NULL, content_uid = sqlc.arg(content_uid), error_code = NULL
+UPDATE publications SET state = 'LIVE', live_at = now(), superseded_at = NULL, superseded_seq = NULL, content_uid = sqlc.arg(content_uid), error_code = NULL
 WHERE id = sqlc.arg(id) AND state = sqlc.arg(from_state);
 
 -- name: ListSupersededPublications :many
--- Newest superseded first: the default rollback target is the first row.
+-- Most recently superseded first (superseded_seq, never a timestamp): the
+-- default rollback target is the first row, and retention keeps the first N.
 SELECT * FROM publications WHERE language = $1 AND state = 'SUPERSEDED'
-ORDER BY superseded_at DESC, created_at DESC, id DESC;
+ORDER BY superseded_seq DESC;
 
 -- name: ListPublicationsOfLanguage :many
-SELECT * FROM publications WHERE language = $1 ORDER BY created_at, id;
+SELECT * FROM publications WHERE language = $1 ORDER BY seq;

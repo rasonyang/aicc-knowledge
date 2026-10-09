@@ -287,3 +287,40 @@ func TestUnknownModelOnlyConcernsKnownFamilies(t *testing.T) {
 	}
 	_ = gen
 }
+
+const bareAliasCatalogYAML = `products:
+  - id: zq-series
+    names: ["ZQ", "ZQ series", "ZQ 系列"]
+  - id: zq-3s
+    names: ["ZQ 3S"]
+`
+
+// A bare family alias in the catalog must not turn an unlisted model into the
+// series: "ZQ 5" is still an unknown model (R2).
+func TestBareFamilyAliasKeepsUnknownModelNoMatch(t *testing.T) {
+	e := publishtest.New(t)
+	e.SetCatalog(bareAliasCatalogYAML)
+	series := e.AddCandidate(publishtest.Cand{Key: "kb/a.docx", Language: EN, Question: "Is the ZQ series waterproof?", Answer: "Splash resistant."})
+	zq3s := e.AddCandidate(publishtest.Cand{Key: "kb/a.docx", Language: EN, Question: "Is the ZQ 3S waterproof?", Answer: "Water resistant to one metre."})
+	e.Publish(EN)
+	e.UseCatalogs()
+	s := e.Searcher
+	s.ThresholdEN = 0.7
+
+	r, got := searchIDs(t, s, "Is the ZQ 5 waterproof?")
+	if r.Status != search.StatusNoMatch || len(got) != 0 || r.Guard.UnknownModel != 1 {
+		t.Errorf("ZQ 5: %+v", r)
+	}
+	r, got = searchIDs(t, s, "Is the ZQ 3S waterproof?")
+	if r.Status != search.StatusHit || len(got) == 0 || got[0] != zq3s.String() {
+		t.Errorf("ZQ 3S: %v %+v", got, r)
+	}
+	r, got = searchIDs(t, s, "Is the ZQ series waterproof?")
+	if r.Status != search.StatusHit || len(got) == 0 || got[0] != series.String() {
+		t.Errorf("ZQ series: %v %+v", got, r)
+	}
+	r, got = searchIDs(t, s, "ZQ 系列 waterproof?")
+	if r.Status != search.StatusHit || !slices.Contains(got, series.String()) {
+		t.Errorf("ZQ 系列: %v %+v", got, r)
+	}
+}

@@ -246,7 +246,7 @@ func (e *Env) Pubs(lang domain.Language) []Pub {
 	e.T.Helper()
 	rows, err := e.Store.Pool.Query(context.Background(), `
 		SELECT id, language, index_uid, state, item_count, COALESCE(error_code, ''), COALESCE(content_uid, '')
-		FROM publications WHERE language = $1 ORDER BY created_at, id`, string(lang))
+		FROM publications WHERE language = $1 ORDER BY seq`, string(lang))
 	if err != nil {
 		e.T.Fatal(err)
 	}

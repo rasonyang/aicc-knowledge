@@ -188,7 +188,6 @@ func TestQARowsThatCannotBecomeCandidatesAreDroppedLoudly(t *testing.T) {
 		{"question too long", mk(strings.Repeat("very long question ", 20)+"?", "Short.", "EN")},
 		{"markdown in the question", mk("What is **this**?", "A thing.", "EN")},
 		{"language differs from the mapping", mk("Does it work?", "是的，可以使用。", "EN")},
-		{"condensed answer states a new figure", mk("How do I reset?", "Hold the power button.\n- Wait for the light.\n- Release the button for 10 seconds.", "EN")},
 	}
 	for _, c := range cases {
 		got, err := h.Worker.qaRow(context.Background(), "kb/x.xlsx", c.s, &sum)
@@ -202,11 +201,85 @@ func TestQARowsThatCannotBecomeCandidatesAreDroppedLoudly(t *testing.T) {
 	if n := strings.Count(h.Log.String(), "Q&A row dropped"); n != len(cases) {
 		t.Errorf("warnings logged = %d, want %d:\n%s", n, len(cases), h.Log.String())
 	}
-	if !strings.Contains(h.Log.String(), "UNGROUNDED_FIGURE") {
-		t.Errorf("the ungrounded condensation is not named:\n%s", h.Log.String())
+	if n := len(h.Server.Calls()); n != 0 {
+		t.Errorf("LLM calls = %d, want none (no row is condensable)", n)
 	}
-	if n := len(h.Server.Calls()); n != 1 {
-		t.Errorf("LLM calls = %d, want exactly one (only the condensable row)", n)
+}
+
+// A row whose condensation fails is kept with its original answer and the
+// NEEDS_SHORTENING flag, never dropped.
+func TestQACondenseFailureKeepsTheRowForShortening(t *testing.T) {
+	original := "Hold the power button.\n- Wait for the light.\n- Release the button for 10 seconds."
+	for _, tc := range []struct {
+		name, reply, logged string
+	}{
+		{"still too long", `{"answer":"` + strings.Repeat("Hold the power button and wait. ", 20) + `"}`, "ANSWER_TOO_LONG"},
+		{"ungrounded figure", `{"answer":"Hold the power button for 15 seconds."}`, "UNGROUNDED_FIGURE"},
+		{"invalid output", `{"nope":1}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, func(c llmtest.Call) (string, *llmtest.Fail) { return tc.reply, nil })
+			q, lang := "How do I reset?", "EN"
+			var sum Summary
+			got, err := h.Worker.qaRow(context.Background(), "kb/x.xlsx", queries.ParsedSection{
+				Ordinal: 1, Kind: string(domain.SectionKindXlsxQARow), SourceRef: "kb/x.xlsx#S!A2", Body: original,
+				QaQuestion: &q, QaLanguage: &lang, QaAlternates: []string{"reset steps"},
+			}, &sum)
+			if err != nil || len(got) != 1 {
+				t.Fatalf("drafts %+v, err %v; want exactly one", got, err)
+			}
+			d := got[0]
+			if d.answer != original || !d.needsShortening || d.promptVersion != QAImportVersion || d.model != "" ||
+				d.question != q || !slices.Equal(d.alternates, []string{"reset steps"}) {
+				t.Errorf("draft = %+v", d)
+			}
+			if sum.QANeedsShortening != 1 || sum.QADropped != 0 || sum.QACondensed != 0 || sum.QAVerbatim != 0 {
+				t.Errorf("summary = %+v", sum)
+			}
+			if !strings.Contains(h.Log.String(), "kept for shortening") || !strings.Contains(h.Log.String(), tc.logged) {
+				t.Errorf("log lacks the reason %q:\n%s", tc.logged, h.Log.String())
+			}
+			if !slices.Contains(draftFlags(d), "NEEDS_SHORTENING") {
+				t.Errorf("flags = %v", draftFlags(d))
+			}
+		})
+	}
+}
+
+func TestQAEndToEndStoresNeedsShorteningCandidates(t *testing.T) {
+	h := newHarness(t, func(c llmtest.Call) (string, *llmtest.Fail) {
+		u := c.User()
+		switch {
+		case strings.Contains(u, "Question: How do I reset the device?"):
+			return `{"answer":"Hold the power button for 15 seconds."}`, nil // ungrounded
+		case strings.Contains(u, "Question: Which colors can I choose?"):
+			return `{"oops":true}`, nil // invalid
+		}
+		return empty, nil
+	})
+	h.Env.PutFixture("qa.xlsx", "xlsx/qa.xlsx")
+	h.Env.Put("qa.qa.yaml", []byte(qaMapping))
+	h.Env.ScanParse()
+	v, _ := h.Env.Current("qa.xlsx")
+	sum := h.run()
+	if sum.QANeedsShortening != 2 || sum.QADropped != 0 || sum.QAVerbatim != 3 || sum.Candidates != 5 {
+		t.Fatalf("summary = %+v", sum)
+	}
+	flagged := 0
+	for _, c := range h.candidates(v.ID) {
+		if !slices.Contains(c.Flags, "NEEDS_SHORTENING") {
+			continue
+		}
+		flagged++
+		if c.State != "PENDING_REVIEW" || c.PromptVersion != QAImportVersion || c.Model != "" || c.Answer == "" {
+			t.Errorf("flagged candidate = %+v", c)
+		}
+	}
+	if flagged != 2 {
+		t.Errorf("flagged candidates = %d, want 2", flagged)
+	}
+	if !strings.Contains(h.metrics(), `kb_generate_sections_total{outcome="QA_NEEDS_SHORTENING"} 2`) {
+		t.Errorf("metric missing:\n%s", h.metrics())
 	}
 }
 

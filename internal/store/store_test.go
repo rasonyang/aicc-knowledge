@@ -67,8 +67,8 @@ func TestMigrateUpDownUp(t *testing.T) {
 		t.Fatalf("tables after up = %v, want %v", got, want)
 	}
 	applied, latest, err := s.MigrationVersions(ctx)
-	if err != nil || applied != latest || latest != 14 {
-		t.Fatalf("versions applied=%d latest=%d err=%v, want 14/14", applied, latest, err)
+	if err != nil || applied != latest || latest != 16 {
+		t.Fatalf("versions applied=%d latest=%d err=%v, want 16/16", applied, latest, err)
 	}
 
 	if err := s.MigrateDown(ctx); err != nil {
@@ -351,10 +351,10 @@ func TestSchemaNamingConventions(t *testing.T) {
 			t.Errorf("constraint %q should start with %s", name, prefix)
 		}
 	}
-	// 8 unique + 14 foreign keys; the exact count guards against a constraint
+	// 9 unique + 14 foreign keys; the exact count guards against a constraint
 	// that escaped the naming rule.
-	if seen != 22 {
-		t.Fatalf("unique and foreign-key constraints = %d, want 22", seen)
+	if seen != 23 {
+		t.Fatalf("unique and foreign-key constraints = %d, want 23", seen)
 	}
 }
 

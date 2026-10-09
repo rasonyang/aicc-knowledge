@@ -287,6 +287,15 @@ func (c *Catalog) Extract(text string) Extraction {
 			i++
 			continue
 		}
+		if end := c.modelSuffixEnd(stripped, spaceBefore, i, i+l); end > 0 {
+			// A bare family alias ("ZQ") directly followed by a model suffix
+			// ("5", "3S", "5 Pro") that no longer alias matched: a model of a
+			// known family that the catalog does not list (R2), not the series.
+			ex.UnknownModels = append(ex.UnknownModels, string(cased[pos[i]:pos[end-1]+1]))
+			covered = append(covered, span{pos[i], pos[end-1] + 1})
+			i = end
+			continue
+		}
 		record(id, i, i+l)
 		j := i + l
 		// "ZQ 3/3S": after a list separator the family word of the alias just
@@ -322,6 +331,45 @@ func (c *Catalog) Extract(text string) Extraction {
 		}
 	}
 	return ex
+}
+
+// modelWords are the words that may follow the digits of a model ("5 Pro").
+var modelWords = []string{"pro", "max", "air", "plus", "ultra", "mini", "lite", "se"}
+
+// modelSuffixEnd reports where the model suffix after stripped[i:j] ends, or 0
+// when stripped[i:j] is not a bare family alias (letters only) or no suffix
+// follows. A suffix is one or two digits followed by a model word ("5 Pro") or
+// up to two letters ("3S"); separators are already removed from stripped.
+func (c *Catalog) modelSuffixEnd(stripped []rune, spaceBefore []bool, i, j int) int {
+	n := len(stripped)
+	for k := i; k < j; k++ {
+		if stripped[k] < 'a' || stripped[k] > 'z' {
+			return 0
+		}
+	}
+	isDigit := func(k int) bool { return k < n && stripped[k] >= '0' && stripped[k] <= '9' }
+	if !c.families[string(stripped[i:j])] || !isDigit(j) {
+		return 0
+	}
+	e := j
+	for e < j+2 && isDigit(e) {
+		e++
+	}
+	if isDigit(e) {
+		return 0 // three or more digits: a quantity or a year, not a model
+	}
+	for _, w := range modelWords {
+		if e+len(w) <= n && string(stripped[e:e+len(w)]) == w && (e+len(w) == n || spaceBefore[e+len(w)] || !asciiAlnum(stripped[e+len(w)])) {
+			return e + len(w)
+		}
+	}
+	for k := 0; k < 2 && e < n && !spaceBefore[e] && stripped[e] >= 'a' && stripped[e] <= 'z'; k++ {
+		e++
+	}
+	if e < n && !spaceBefore[e] && asciiAlnum(stripped[e]) {
+		return 0
+	}
+	return e
 }
 
 func (c *Catalog) knownFamily(s string, tok modelToken) bool {

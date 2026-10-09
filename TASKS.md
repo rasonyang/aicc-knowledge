@@ -112,3 +112,10 @@ Motivated by an offline experiment on a private real sample (no data in this rep
 - [x] `eval` reports the guard counts and `--sweep` sweeps the generic margin when a catalog is live.
 - [x] Tests: catalog lifecycle through S3 (valid, invalid, second catalog, change, rollback); search with a synthetic corpus (other product never returned, compatible allowed, unknown model, generic margin, no catalog unchanged); guard latency under 1 ms.
 - Deferred: a lazy catalog refresh when a hit carries a newer publication id than the cached catalog; a per-product `family:` override in `products.yaml` (families are the leading Latin word of each alias; add the override if a prefix turns out ambiguous).
+
+## M8. Final validation findings
+
+- [x] Products: a bare family alias followed by an unlisted model suffix is an unknown model (R2); table tests (digits, letters, words, Chinese numerals, full-width, hyphen) and a real-service search test (`ZQ 5` NO_MATCH, `ZQ 3S` HIT, series HIT).
+- [x] Generate: a Q&A row whose condensation fails is kept with the original answer and `NEEDS_SHORTENING` (migration 00015, `QA_NEEDS_SHORTENING`); fake-LLM tests for too long, ungrounded and invalid output.
+- [x] Review: `APPROVE` on a flagged candidate is `SHORTENING_REQUIRED`; `EDIT` validates and clears the flag; `REJECT` works. Publish: a flagged candidate never reaches an index unless edited.
+- [x] README, CHANGELOG and research caveat C4 updated.

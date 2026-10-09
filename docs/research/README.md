@@ -102,6 +102,18 @@ decision itself.
   stays at 0.85 with a margin of 0 because there is no real EN data yet. These
   numbers are a statement about that sample; re-calibrate on yours with `eval
   --sweep`, which sweeps the margin when a catalog is live.
+
+  Final validation (2026-10-09): a private, desensitized real corpus, 170
+  Chinese questions (relabelled against regenerated candidates: 132
+  answerable, 38 negative). At ZH 0.875 with generic margin 0.04 and a product
+  catalog: recall@3 0.939, NO_MATCH precision 0.871, NO_MATCH recall 0.711.
+  The same labels with the guard off: recall@3 0.939, NO_MATCH precision
+  0.850, NO_MATCH recall 0.447. A precision-first alternative is 0.85 with
+  margin 0.06 (recall@3 0.947, NO_MATCH precision 0.944, NO_MATCH recall
+  0.447). Search on a NO_MATCH took about 6 ms after the client-side
+  threshold change. Latency figures are from an Apple M3 and are not
+  production numbers; use `make bench` on the target hardware. The defaults
+  stay 0.875 and 0.04.
 - **C5: Scope keys are validated in the service** against the configured
   filterable keys, before Meilisearch is called.
 - **C6: Swap tasks are asynchronous.** A swap returns 202 even when an index

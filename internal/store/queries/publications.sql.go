@@ -32,7 +32,7 @@ func (q *Queries) FailPublication(ctx context.Context, arg FailPublicationParams
 
 const getLivePublication = `-- name: GetLivePublication :one
 
-SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id FROM publications
+SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id, seq, superseded_seq FROM publications
 WHERE language = $1 AND state = 'LIVE'
 `
 
@@ -52,12 +52,14 @@ func (q *Queries) GetLivePublication(ctx context.Context, language string) (Publ
 		&i.SupersededAt,
 		&i.ContentUid,
 		&i.CatalogID,
+		&i.Seq,
+		&i.SupersededSeq,
 	)
 	return i, err
 }
 
 const getPublication = `-- name: GetPublication :one
-SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id FROM publications WHERE id = $1
+SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id, seq, superseded_seq FROM publications WHERE id = $1
 `
 
 func (q *Queries) GetPublication(ctx context.Context, id uuid.UUID) (Publication, error) {
@@ -75,6 +77,8 @@ func (q *Queries) GetPublication(ctx context.Context, id uuid.UUID) (Publication
 		&i.SupersededAt,
 		&i.ContentUid,
 		&i.CatalogID,
+		&i.Seq,
+		&i.SupersededSeq,
 	)
 	return i, err
 }
@@ -133,7 +137,7 @@ func (q *Queries) InsertPublicationItem(ctx context.Context, arg InsertPublicati
 }
 
 const listBuildingPublications = `-- name: ListBuildingPublications :many
-SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id FROM publications WHERE language = $1 AND state = 'BUILDING' ORDER BY created_at
+SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id, seq, superseded_seq FROM publications WHERE language = $1 AND state = 'BUILDING' ORDER BY seq
 `
 
 func (q *Queries) ListBuildingPublications(ctx context.Context, language string) ([]Publication, error) {
@@ -157,6 +161,8 @@ func (q *Queries) ListBuildingPublications(ctx context.Context, language string)
 			&i.SupersededAt,
 			&i.ContentUid,
 			&i.CatalogID,
+			&i.Seq,
+			&i.SupersededSeq,
 		); err != nil {
 			return nil, err
 		}
@@ -203,7 +209,7 @@ func (q *Queries) ListPublicationItems(ctx context.Context, publicationID uuid.U
 }
 
 const listPublicationsOfLanguage = `-- name: ListPublicationsOfLanguage :many
-SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id FROM publications WHERE language = $1 ORDER BY created_at, id
+SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id, seq, superseded_seq FROM publications WHERE language = $1 ORDER BY seq
 `
 
 func (q *Queries) ListPublicationsOfLanguage(ctx context.Context, language string) ([]Publication, error) {
@@ -227,6 +233,8 @@ func (q *Queries) ListPublicationsOfLanguage(ctx context.Context, language strin
 			&i.SupersededAt,
 			&i.ContentUid,
 			&i.CatalogID,
+			&i.Seq,
+			&i.SupersededSeq,
 		); err != nil {
 			return nil, err
 		}
@@ -239,11 +247,12 @@ func (q *Queries) ListPublicationsOfLanguage(ctx context.Context, language strin
 }
 
 const listSupersededPublications = `-- name: ListSupersededPublications :many
-SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id FROM publications WHERE language = $1 AND state = 'SUPERSEDED'
-ORDER BY superseded_at DESC, created_at DESC, id DESC
+SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id, seq, superseded_seq FROM publications WHERE language = $1 AND state = 'SUPERSEDED'
+ORDER BY superseded_seq DESC
 `
 
-// Newest superseded first: the default rollback target is the first row.
+// Most recently superseded first (superseded_seq, never a timestamp): the
+// default rollback target is the first row, and retention keeps the first N.
 func (q *Queries) ListSupersededPublications(ctx context.Context, language string) ([]Publication, error) {
 	rows, err := q.db.Query(ctx, listSupersededPublications, language)
 	if err != nil {
@@ -265,6 +274,8 @@ func (q *Queries) ListSupersededPublications(ctx context.Context, language strin
 			&i.SupersededAt,
 			&i.ContentUid,
 			&i.CatalogID,
+			&i.Seq,
+			&i.SupersededSeq,
 		); err != nil {
 			return nil, err
 		}
@@ -277,7 +288,7 @@ func (q *Queries) ListSupersededPublications(ctx context.Context, language strin
 }
 
 const lockLivePublication = `-- name: LockLivePublication :one
-SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id FROM publications WHERE language = $1 AND state = 'LIVE' FOR UPDATE
+SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id, seq, superseded_seq FROM publications WHERE language = $1 AND state = 'LIVE' FOR UPDATE
 `
 
 func (q *Queries) LockLivePublication(ctx context.Context, language string) (Publication, error) {
@@ -295,12 +306,14 @@ func (q *Queries) LockLivePublication(ctx context.Context, language string) (Pub
 		&i.SupersededAt,
 		&i.ContentUid,
 		&i.CatalogID,
+		&i.Seq,
+		&i.SupersededSeq,
 	)
 	return i, err
 }
 
 const lockPublication = `-- name: LockPublication :one
-SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id FROM publications WHERE id = $1 FOR UPDATE
+SELECT id, language, index_uid, state, item_count, error_code, created_at, live_at, superseded_at, content_uid, catalog_id, seq, superseded_seq FROM publications WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockPublication(ctx context.Context, id uuid.UUID) (Publication, error) {
@@ -318,12 +331,14 @@ func (q *Queries) LockPublication(ctx context.Context, id uuid.UUID) (Publicatio
 		&i.SupersededAt,
 		&i.ContentUid,
 		&i.CatalogID,
+		&i.Seq,
+		&i.SupersededSeq,
 	)
 	return i, err
 }
 
 const promotePublication = `-- name: PromotePublication :execrows
-UPDATE publications SET state = 'LIVE', live_at = now(), superseded_at = NULL, content_uid = $1, error_code = NULL
+UPDATE publications SET state = 'LIVE', live_at = now(), superseded_at = NULL, superseded_seq = NULL, content_uid = $1, error_code = NULL
 WHERE id = $2 AND state = $3
 `
 
@@ -372,7 +387,7 @@ func (q *Queries) SetPublicationItemCount(ctx context.Context, arg SetPublicatio
 }
 
 const supersedePublication = `-- name: SupersedePublication :execrows
-UPDATE publications SET state = 'SUPERSEDED', superseded_at = now(), content_uid = $1
+UPDATE publications SET state = 'SUPERSEDED', superseded_at = now(), superseded_seq = nextval('publication_superseded_seq'), content_uid = $1
 WHERE id = $2 AND state = 'LIVE'
 `
 

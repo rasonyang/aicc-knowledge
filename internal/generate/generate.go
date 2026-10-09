@@ -95,6 +95,9 @@ const (
 	SectionQAVerbatim  = "QA_VERBATIM"
 	SectionQACondensed = "QA_CONDENSED"
 	SectionQADropped   = "QA_DROPPED"
+	// SectionQANeedsShortening counts Q&A rows kept with their original answer
+	// and the NEEDS_SHORTENING flag because condensing did not give a usable one.
+	SectionQANeedsShortening = "QA_NEEDS_SHORTENING"
 )
 
 // Summary counts what one Run did.
@@ -116,6 +119,7 @@ type Summary struct {
 	QAVerbatim        int // Q&A rows imported as they are
 	QACondensed       int // Q&A rows whose answer the LLM shortened
 	QADropped         int // Q&A rows that gave no candidate (invalid)
+	QANeedsShortening int // Q&A rows kept with the original answer, flagged NEEDS_SHORTENING
 }
 
 // Completer is what the worker needs from the LLM client.
@@ -406,6 +410,9 @@ type draft struct {
 	// verbatim Q&A import.
 	promptVersion string
 	model         string
+	// needsShortening marks a Q&A row whose original answer fails the answer
+	// limits and was kept for the reviewer to shorten.
+	needsShortening bool
 }
 
 // output is the schema the model answers with.
@@ -753,7 +760,7 @@ func (w *Worker) persist(ctx context.Context, queue *jobs.Queue, job jobs.Job, v
 			n, err := q.InsertCandidate(ctx, queries.InsertCandidateParams{
 				FileVersionID: versionID, SectionOrdinal: ptr(int32(d.ordinal)), Language: string(d.language), Question: d.question,
 				AlternateQuestions: d.alternates, Answer: d.answer, SourceRef: d.sourceRef,
-				Flags: candidate.Flags(d.question, d.alternates, d.answer), ContentHash: hash[:],
+				Flags: draftFlags(d), ContentHash: hash[:],
 				PromptVersion: d.promptVersion, Model: d.model, GeneratedAt: tsz(d.generated),
 			})
 			if err != nil {
@@ -779,6 +786,16 @@ func (w *Worker) persist(ctx context.Context, queue *jobs.Queue, job jobs.Job, v
 	}
 	sum.Candidates += stored
 	return stored, "", nil
+}
+
+// draftFlags is the flag set of a draft: the figures flag, plus
+// NEEDS_SHORTENING for a Q&A row kept with its over-long original answer.
+func draftFlags(d draft) []string {
+	f := candidate.Flags(d.question, d.alternates, d.answer)
+	if d.needsShortening {
+		f = append(f, string(domain.FlagNeedsShortening))
+	}
+	return f
 }
 
 func ptr[T any](v T) *T { return &v }

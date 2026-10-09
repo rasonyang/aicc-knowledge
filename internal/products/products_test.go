@@ -246,3 +246,66 @@ func BenchmarkExtract(b *testing.B) {
 		c.Extract(q)
 	}
 }
+
+const bareAliasCatalog = `
+products:
+  - id: zq-series
+    names: ["ZQ", "ZQ 系列"]
+  - id: zq-3
+    names: ["ZQ 3"]
+  - id: zq-3s
+    names: ["ZQ 3S"]
+  - id: zq-ultra
+    names: ["ZQ Ultra"]
+  - id: nova
+    names: ["Nova"]
+  - id: nova-k2
+    names: ["Nova K2"]
+`
+
+// A bare family alias must not swallow the model after it (R2).
+func TestExtractBareFamilyAlias(t *testing.T) {
+	c, err := Parse([]byte(bareAliasCatalog))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, in string
+		ids      []string
+		unknown  []string
+	}{
+		{"unknown number", "ZQ 5 电池能用多久", nil, []string{"ZQ 5"}},
+		{"unknown compact", "zq5电池能用多久", nil, []string{"zq5"}},
+		{"unknown hyphen", "ZQ-5 电池能用多久", nil, []string{"ZQ-5"}},
+		{"unknown chinese numeral", "ZQ五电池能用多久", nil, []string{"ZQ 5"}},
+		{"unknown full width", "ＺＱ　５防水吗", nil, []string{"ZQ 5"}},
+		{"unknown with letters", "ZQ 5S 防水吗", nil, []string{"ZQ 5S"}},
+		{"unknown with word", "ZQ 5 Pro 防水吗", nil, []string{"ZQ 5 Pro"}},
+		{"unknown with glued word", "ZQ 9Air 防水吗", nil, []string{"ZQ 9Air"}},
+		{"other family", "Nova 7 多久保修", nil, []string{"Nova 7"}},
+		{"unknown then english words", "Is the ZQ 5 waterproof?", nil, []string{"ZQ 5"}},
+		{"unknown letters then english words", "Is the ZQ 5S waterproof?", nil, []string{"ZQ 5S"}},
+		{"unknown with word then english", "Is the ZQ 5 Pro waterproof?", nil, []string{"ZQ 5 Pro"}},
+		{"unknown next to known", "ZQ Ultra 和 ZQ 5 区别", []string{"zq-ultra"}, []string{"ZQ 5"}},
+		{"known 3", "ZQ 3 防水吗", []string{"zq-3"}, nil},
+		{"known 3S", "ZQ 3S 防水吗", []string{"zq-3s"}, nil},
+		{"known chinese numeral", "ZQ三S 防水吗", []string{"zq-3s"}, nil},
+		{"known Ultra", "ZQ Ultra 防水吗", []string{"zq-ultra"}, nil},
+		{"series alias", "ZQ 系列 防水吗", []string{"zq-series"}, nil},
+		{"bare alone", "ZQ 防水吗", []string{"zq-series"}, nil},
+		{"bare then text", "ZQ 怎么充电", []string{"zq-series"}, nil},
+		{"bare then year", "ZQ 2024 款", []string{"zq-series"}, nil},
+		{"nova k2 still matches", "Nova K2 保修", []string{"nova-k2"}, nil},
+		{"bare nova alone", "Nova 保修", []string{"nova"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := c.Extract(tc.in)
+			if !slices.Equal(got.IDs, tc.ids) || len(got.IDs) != len(tc.ids) {
+				t.Errorf("IDs = %v, want %v", got.IDs, tc.ids)
+			}
+			if !slices.Equal(got.UnknownModels, tc.unknown) || len(got.UnknownModels) != len(tc.unknown) {
+				t.Errorf("UnknownModels = %v, want %v", got.UnknownModels, tc.unknown)
+			}
+		})
+	}
+}

@@ -11,10 +11,16 @@ const (
 	// FlagContainsFigures: the question or answer states a number (a price, a
 	// duration, a percentage) the reviewer must check against the source.
 	FlagContainsFigures CandidateFlag = "CONTAINS_FIGURES"
+	// FlagNeedsShortening: a curated Q&A answer that fails the answer limits
+	// and could not be condensed automatically. It carries the original answer
+	// and cannot be approved as it is; the reviewer must EDIT it down.
+	FlagNeedsShortening CandidateFlag = "NEEDS_SHORTENING"
 )
 
 // CandidateFlags returns the enum's value set.
-func CandidateFlags() []CandidateFlag { return []CandidateFlag{FlagContainsFigures} }
+func CandidateFlags() []CandidateFlag {
+	return []CandidateFlag{FlagContainsFigures, FlagNeedsShortening}
+}
 
 // ReviewAction is what a reviewer decided about a candidate. EDIT means
 // "approve with the edits I made": the candidate ends APPROVED with the new

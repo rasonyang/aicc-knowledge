@@ -27,9 +27,15 @@ import (
 //     that answer (qa-condense-v1). The question stays verbatim. The result
 //     must pass the same rules and may not state a figure the original answer
 //     does not;
+//   - if the condensation fails (still too long, a figure the original does not
+//     state, cut-off or invalid output) the row is NOT dropped: it is kept with
+//     the original answer verbatim, the flag NEEDS_SHORTENING and state
+//     PENDING_REVIEW, so curated knowledge never disappears. It is stored as
+//     qa-import-v1 with no model, because the text is the sheet's own. The
+//     reviewer must EDIT the answer down (see internal/review);
 //   - anything else (an invalid question, a URL in the answer, a language that
-//     is not the mapping's, a failed condensation) drops the row with a
-//     warning. A row is never silent.
+//     is not the mapping's) drops the row with a warning. A row is never
+//     silent.
 func (w *Worker) qaRow(ctx context.Context, objectKey string, s queries.ParsedSection, sum *Summary) ([]draft, error) {
 	lang := domain.Language("")
 	if s.QaLanguage != nil {
@@ -45,6 +51,7 @@ func (w *Worker) qaRow(ctx context.Context, objectKey string, s queries.ParsedSe
 
 	outcome := SectionQAVerbatim
 	ver, model := QAImportVersion, ""
+	needsShortening := false
 	if !r.OK() {
 		if !condensable(r.Violations) {
 			return nil, w.dropQA(ctx, objectKey, s, lang, sum, "validation failed: "+violationList(r.Violations))
@@ -54,16 +61,25 @@ func (w *Worker) qaRow(ctx context.Context, objectKey string, s queries.ParsedSe
 			return nil, err
 		}
 		if short.problem != "" {
-			return nil, w.dropQA(ctx, objectKey, s, lang, sum, "condensing the answer failed: "+short.problem)
+			w.log().Warn("Q&A answer kept for shortening", "sourceRef", s.SourceRef, "key", objectKey, "why", short.problem)
+			needsShortening = true
+			outcome = SectionQANeedsShortening
+			// The original answer, verbatim: r.Answer is the cleaned text of
+			// the failed validation, which may have changed white space.
+			r.Answer = answer
+		} else {
+			in.Answer = short.answer
+			r = candidate.Validate(in, w.Limits)
+			outcome, ver, model = SectionQACondensed, QACondenseVersion, w.LLM.Model()
 		}
-		in.Answer = short.answer
-		r = candidate.Validate(in, w.Limits)
-		outcome, ver, model = SectionQACondensed, QACondenseVersion, w.LLM.Model()
 	}
-	if outcome == SectionQAVerbatim {
+	switch outcome {
+	case SectionQAVerbatim:
 		sum.QAVerbatim++
-	} else {
+	case SectionQACondensed:
 		sum.QACondensed++
+	default:
+		sum.QANeedsShortening++
 	}
 	if w.Metrics != nil {
 		w.Metrics.ObserveGenerateSection(ctx, outcome)
@@ -71,7 +87,7 @@ func (w *Worker) qaRow(ctx context.Context, objectKey string, s queries.ParsedSe
 	w.count(ctx, string(lang), OutcomeCreated, 0) // keeps the series visible
 	return []draft{{
 		language: r.Language, question: r.Question, alternates: r.AlternateQuestions, answer: r.Answer,
-		generated: time.Now(), promptVersion: ver, model: model,
+		generated: time.Now(), promptVersion: ver, model: model, needsShortening: needsShortening,
 	}}, nil
 }
 

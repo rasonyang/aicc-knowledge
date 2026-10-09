@@ -525,6 +525,77 @@ func TestRollbackToAPrunedPublicationRebuildsItFromTheSnapshot(t *testing.T) {
 	e.AssertContentUIDs(EN)
 }
 
+// TestPublicationOrderDoesNotDependOnAnyClock pins migration 00016. Database
+// backends of one server can disagree about the time by hundreds of
+// milliseconds, so created_at, superseded_at and uuidv7 ids can sort two
+// consecutive operator actions the wrong way round. created_at is a column
+// default (bound to the real now() when the table was made, so a shadowing
+// function on the search_path cannot reach it); the test instead rewrites the
+// timestamps of earlier publications to run 10 and 20 minutes ahead, which is
+// what a fast-clock backend would have stamped, and requires the listing, the
+// default rollback target and retention to follow the sequence numbers.
+func TestPublicationOrderDoesNotDependOnAnyClock(t *testing.T) {
+	e := publishtest.New(t)
+	e.Publisher.RetainIndexes = 3
+	ctx := context.Background()
+	var pubs []uuid.UUID
+	publishNew := func(q string) {
+		e.AddCandidate(publishtest.Cand{Language: EN, Question: q})
+		pubs = append(pubs, e.Publish(EN).PublicationID)
+	}
+	publishNew("How do I reset my password?")
+	publishNew("What are your opening hours?")
+	publishNew("How can I cancel my subscription?")
+	for i, ahead := range []string{"20 minutes", "10 minutes"} {
+		if _, err := e.Store.Pool.Exec(ctx,
+			`UPDATE publications SET created_at = created_at + $2::interval, superseded_at = superseded_at + $2::interval WHERE id = $1`,
+			pubs[i], ahead); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var got []uuid.UUID
+	for _, p := range e.Pubs(EN) {
+		got = append(got, p.ID)
+	}
+	if !slices.Equal(got, pubs) {
+		t.Fatalf("Pubs order = %v, want creation order %v", got, pubs)
+	}
+	rows, err := e.Store.Queries.ListPublicationsOfLanguage(ctx, string(EN))
+	if err != nil || len(rows) != 3 || rows[0].ID != pubs[0] || rows[1].ID != pubs[1] || rows[2].ID != pubs[2] {
+		t.Fatalf("ListPublicationsOfLanguage = %v, %v, want creation order %v", rows, err, pubs)
+	}
+	sup, err := e.Store.Queries.ListSupersededPublications(ctx, string(EN))
+	if err != nil || len(sup) != 2 || sup[0].ID != pubs[1] || sup[1].ID != pubs[0] {
+		t.Fatalf("ListSupersededPublications = %v, %v, want [%s %s]", sup, err, pubs[1], pubs[0])
+	}
+
+	// Default rollback target: the most recently superseded (pubs[1]), though
+	// pubs[0] carries the later timestamp.
+	rb, err := e.Publisher.Rollback(ctx, EN, nil)
+	if err != nil || rb.From != pubs[2] || rb.To != pubs[1] {
+		t.Fatalf("rollback = %+v, %v, want %s -> %s", rb, err, pubs[2], pubs[1])
+	}
+
+	// Retention keeps the most recently superseded, not the latest timestamp:
+	// pubs[2] was superseded by the rollback, so after a fourth publication
+	// (which supersedes pubs[1]) the order is pubs[1], pubs[2], pubs[0].
+	e.Publisher.RetainIndexes = 1
+	publishNew("Do you have a mobile app?")
+	if st := []string{e.Pub(pubs[0]).State, e.Pub(pubs[1]).State, e.Pub(pubs[2]).State, e.Pub(pubs[3]).State}; !slices.Equal(st, []string{"SUPERSEDED", "SUPERSEDED", "SUPERSEDED", "LIVE"}) {
+		t.Fatalf("states = %v", st)
+	}
+	if kept := e.Pub(pubs[1]).ContentUID; kept == "" {
+		t.Errorf("retention pruned the most recently superseded publication")
+	}
+	for _, i := range []int{0, 2} {
+		if uid := e.Pub(pubs[i]).ContentUID; uid != "" {
+			t.Errorf("publication %d still holds index %s, want it pruned", i, uid)
+		}
+	}
+	e.AssertContentUIDs(EN)
+}
+
 func pruned(ids []uuid.UUID) []string { return publishtest.IDs(ids...) }
 
 func TestRetentionKeepsTheNewestAndKeepsTheRows(t *testing.T) {
@@ -731,4 +802,42 @@ func TestAnIndexThatDoesNotHoldThePublicationIsRebuiltNotTrusted(t *testing.T) {
 		t.Errorf("live = %v", got)
 	}
 	e.AssertContentUIDs(EN)
+}
+
+// A candidate kept for shortening (PENDING_REVIEW, original over-long answer)
+// never reaches an index; only the reviewer's EDIT, which approves it and
+// removes the flag, publishes it.
+func TestNeedsShorteningCandidateIsNeverPublishedUnlessEdited(t *testing.T) {
+	e := publishtest.New(t)
+	ok := e.AddCandidate(publishtest.Cand{Language: EN, Question: "How do I reset the device?", Answer: "Hold the power button."})
+	long := e.AddCandidate(publishtest.Cand{Language: EN, Question: "How do I clean the lens?", State: "PENDING_REVIEW",
+		Answer: strings.Repeat("Wipe the lens gently with a soft cloth. ", 20)})
+	if _, err := e.Store.Pool.Exec(context.Background(), `UPDATE candidates SET flags = ARRAY['NEEDS_SHORTENING'] WHERE id = $1`, long); err != nil {
+		t.Fatal(err)
+	}
+
+	res := e.Publish(EN)
+	if res.Items != 1 {
+		t.Fatalf("result = %+v, want 1 item", res)
+	}
+	if got := e.DocIDs(e.Live(EN)); !slices.Equal(got, []string{ok.String()}) || len(got) != 1 {
+		t.Fatalf("live index holds %v, want only %s", got, ok)
+	}
+	if got := e.SearchIDs(EN, "How do I clean the lens?", nil, 3); slices.Contains(got, long.String()) {
+		t.Errorf("search returned the unreviewed candidate: %v", got)
+	}
+
+	// The reviewer's EDIT: new short answer, APPROVED, flag removed.
+	if _, err := e.Store.Pool.Exec(context.Background(),
+		`UPDATE candidates SET answer = 'Wipe it with a soft cloth.', state = 'APPROVED', flags = '{}' WHERE id = $1`, long); err != nil {
+		t.Fatal(err)
+	}
+	if res := e.Publish(EN); res.Items != 2 {
+		t.Fatalf("after the edit: %+v, want 2 items", res)
+	}
+	want := []string{ok.String(), long.String()}
+	slices.Sort(want)
+	if got := e.DocIDs(e.Live(EN)); !slices.Equal(got, want) || len(got) != 2 {
+		t.Errorf("live index holds %v, want %v", got, want)
+	}
 }

@@ -98,6 +98,20 @@ test: ## go test -race ./... (needs KB_TEST_DATABASE_URL, KB_TEST_MEILI_URL, KB_
 test-gate: ## What CI runs: go test -race, failing on any skip not in .ci-allowed-skips.txt (needs jq and KB_TEST_TEI_URL as well)
 	scripts/test-gate.sh
 
+.PHONY: bench
+bench: ## Benchmark TEI embed/rerank on this host with synthetic text (needs Docker; see README)
+	scripts/bench/bench.sh $(BENCH_ARGS)
+
+.PHONY: bench-compare
+bench-compare: ## Compare two bench result dirs numerically: make bench-compare A=dirA B=dirB
+	@test -n "$(A)" -a -n "$(B)" || { echo 'usage: make bench-compare A=<dir> B=<dir>'; exit 2; }
+	go run ./cmd/kb-bench compare $(A) $(B)
+
+.PHONY: bench-dist
+bench-dist: ## Static kb-bench binaries for linux/amd64 and linux/arm64 in bin/
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o bin/kb-bench-linux-amd64 ./cmd/kb-bench
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o bin/kb-bench-linux-arm64 ./cmd/kb-bench
+
 .PHONY: lint
 lint: ## Vet Go code and check formatting
 	go vet ./...

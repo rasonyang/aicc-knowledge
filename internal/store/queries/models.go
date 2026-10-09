@@ -130,17 +130,19 @@ type ProductCatalog struct {
 }
 
 type Publication struct {
-	ID           uuid.UUID          `json:"id"`
-	Language     string             `json:"language"`
-	IndexUid     string             `json:"indexUid"`
-	State        string             `json:"state"`
-	ItemCount    int32              `json:"itemCount"`
-	ErrorCode    *string            `json:"errorCode"`
-	CreatedAt    pgtype.Timestamptz `json:"createdAt"`
-	LiveAt       pgtype.Timestamptz `json:"liveAt"`
-	SupersededAt pgtype.Timestamptz `json:"supersededAt"`
-	ContentUid   *string            `json:"contentUid"`
-	CatalogID    *uuid.UUID         `json:"catalogId"`
+	ID            uuid.UUID          `json:"id"`
+	Language      string             `json:"language"`
+	IndexUid      string             `json:"indexUid"`
+	State         string             `json:"state"`
+	ItemCount     int32              `json:"itemCount"`
+	ErrorCode     *string            `json:"errorCode"`
+	CreatedAt     pgtype.Timestamptz `json:"createdAt"`
+	LiveAt        pgtype.Timestamptz `json:"liveAt"`
+	SupersededAt  pgtype.Timestamptz `json:"supersededAt"`
+	ContentUid    *string            `json:"contentUid"`
+	CatalogID     *uuid.UUID         `json:"catalogId"`
+	Seq           int64              `json:"seq"`
+	SupersededSeq *int64             `json:"supersededSeq"`
 }
 
 type PublicationItem struct {

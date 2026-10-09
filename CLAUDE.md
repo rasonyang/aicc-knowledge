@@ -62,7 +62,7 @@ The content path runs offline as CLI subcommands of one binary (`cmd/aicc-knowle
 2. **`parse`** (`internal/parse` on top of the pure parsers `internal/docx` and `internal/xlsx`):
    - Writes `parsed_sections`. Their identity is `(file_version_id, ordinal)` plus `source_ref`, never the row id, because sections are rewritten.
    - Imports facts: `<name>.facts.yaml` next to `<name>.xlsx` maps sheets to typed `fact_rows` (`internal/facts`). A failed import makes the table `UNAVAILABLE`; stale or partial rows are never served.
-   - Imports Q&A sheets: `<name>.qa.yaml` maps question/answer columns to `XLSX_QA_ROW` sections; `generate` turns them into candidates without the LLM (it only shortens an overlong answer).
+   - Imports Q&A sheets: `<name>.qa.yaml` maps question/answer columns to `XLSX_QA_ROW` sections; `generate` turns them into candidates without the LLM (it only shortens an overlong answer; if that fails the row is kept with the original answer and the flag `NEEDS_SHORTENING`, which `import-review` refuses to APPROVE, so only an EDIT publishes it).
    - Validates the product catalog: the one `products.yaml` at the root of `KB_S3_PREFIX` (`internal/products`) is stored per file version in `product_catalogs`; another one anywhere fails `CATALOG_MISPLACED`.
    - Then it enqueues a GENERATE job (not for a catalog).
 3. **`generate`** (`internal/generate`, `internal/llm`, `internal/candidate`):
@@ -131,5 +131,6 @@ The read path is `serve` (`internal/httpapi` on the generated `internal/api`, pl
 - **SPDX:** every Go, SQL, shell, YAML and Makefile file starts with `SPDX-License-Identifier: Apache-2.0`. Generated sqlc output is exempt.
 - **Migrations:** `internal/store/migrations/NNNNN_snake_sentence.sql`, each with a prose header saying why, plus a real Down. Never edit a migration that has already been applied; add a new one. The store tests run up, down and up again.
 - **Metrics:** names live in `internal/obs/metrics.go`. Do not state performance figures in docs or commits unless `eval` measured them.
+- **Performance figures** must come from the target hardware via `make bench` (`cmd/kb-bench`, synthetic text only). Numbers measured on the Apple M3 dev machine are for development only.
 - **TASKS.md is the plan:** the first unchecked item is the cursor. Check an item only after it is verified against live services.
 - **No attribution:** do not add attribution lines to commits, PRs, issues or release notes.

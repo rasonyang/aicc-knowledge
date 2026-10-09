@@ -674,3 +674,109 @@ func TestImportRejectsFilesThatAreNotReviewExports(t *testing.T) {
 		t.Error("an empty reviewer was accepted")
 	}
 }
+
+// flagForShortening turns candidate id into what generate stores for a Q&A row
+// whose condensation failed: a long original answer, the NEEDS_SHORTENING
+// flag, and a content hash that matches the stored text.
+func (fx *fixture) flagForShortening(id, answer string) {
+	fx.T.Helper()
+	var lang, q, ref, ver string
+	var alts []string
+	if err := fx.Env.Store.Pool.QueryRow(context.Background(),
+		`SELECT language, question, alternate_questions, source_ref, file_version_id::text FROM candidates WHERE id = $1`, id).Scan(&lang, &q, &alts, &ref, &ver); err != nil {
+		fx.T.Fatal(err)
+	}
+	h := candidate.ContentHash(candidate.Content{Language: domain.Language(lang), Question: q, AlternateQuestions: alts, Answer: answer, SourceRef: ref, FileVersionID: uuid.MustParse(ver)})
+	if _, err := fx.Env.Store.Pool.Exec(context.Background(),
+		`UPDATE candidates SET answer = $2, flags = ARRAY['NEEDS_SHORTENING'], content_hash = $3 WHERE id = $1`, id, answer, h[:]); err != nil {
+		fx.T.Fatal(err)
+	}
+}
+
+func TestNeedsShorteningRoundTrip(t *testing.T) {
+	fx := newFixture(t)
+	long := strings.Repeat("Hold the power button and wait for the light. ", 8)
+	var ids []string
+	for r := 0; r < 3; r++ {
+		ids = append(ids, fx.firstPendingID(r))
+	}
+	for _, id := range ids {
+		fx.flagForShortening(id, strings.TrimSpace(long))
+	}
+	path, _ := fx.export(review.ExportOptions{})
+	row := map[string]int{}
+	edit(t, path, func(x *excelize.File) {
+		for r := 2; r <= 10; r++ {
+			row[get(t, x, r, review.ColID)] = r
+		}
+		for _, id := range ids {
+			r := row[id]
+			if got := get(t, x, r, review.ColFlags); got != "NEEDS_SHORTENING" {
+				t.Errorf("export flags = %q", got)
+			}
+			if got := get(t, x, r, review.ColAnswer); got != strings.TrimSpace(long) {
+				t.Errorf("export answer = %q, want the original", got)
+			}
+		}
+		set(t, x, row[ids[0]], review.ColAction, "APPROVE")
+		set(t, x, row[ids[1]], review.ColAction, "EDIT") // answer left long: refused
+		set(t, x, row[ids[2]], review.ColAction, "EDIT")
+		set(t, x, row[ids[2]], review.ColAnswer, "Hold the power button for 10 seconds.")
+	})
+	sum := fx.importFile(path)
+	byRow := map[int]string{}
+	for _, r := range sum.Results {
+		byRow[r.Row] = r.Outcome
+	}
+	if byRow[row[ids[0]]] != review.CodeShorteningRequired || byRow[row[ids[1]]] != review.CodeInvalidEdit || byRow[row[ids[2]]] != review.OutcomeEdited {
+		t.Fatalf("outcomes = %v", byRow)
+	}
+	got := fx.states()
+	if got[ids[0]].State != "PENDING_REVIEW" || got[ids[1]].State != "PENDING_REVIEW" || got[ids[0]].Answer != strings.TrimSpace(long) {
+		t.Errorf("refused rows changed: %+v %+v", got[ids[0]], got[ids[1]])
+	}
+	if got[ids[2]].State != "APPROVED" || got[ids[2]].Answer != "Hold the power button for 10 seconds." {
+		t.Errorf("edited row = %+v", got[ids[2]])
+	}
+	flags := func(id string) []string {
+		var f []string
+		if err := fx.Env.Store.Pool.QueryRow(context.Background(), `SELECT flags FROM candidates WHERE id = $1`, id).Scan(&f); err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	if f := flags(ids[2]); !slices.Equal(f, []string{"CONTAINS_FIGURES"}) || len(f) != 1 {
+		t.Errorf("edited flags = %v, want CONTAINS_FIGURES recomputed and NEEDS_SHORTENING gone", f)
+	}
+	if f := flags(ids[0]); !slices.Equal(f, []string{"NEEDS_SHORTENING"}) {
+		t.Errorf("refused row flags = %v", f)
+	}
+	if n := fx.count(`SELECT count(*) FROM candidate_reviews`); n != 1 {
+		t.Errorf("audit rows = %d, want 1", n)
+	}
+
+	// REJECT works as usual.
+	path2, _ := fx.export(review.ExportOptions{})
+	edit(t, path2, func(x *excelize.File) {
+		for r := 2; r <= 10; r++ {
+			if get(t, x, r, review.ColID) == ids[0] {
+				set(t, x, r, review.ColAction, "REJECT")
+			}
+		}
+	})
+	fx.importFile(path2)
+	if fx.states()[ids[0]].State != "REJECTED" {
+		t.Error("REJECT of a NEEDS_SHORTENING candidate did not apply")
+	}
+}
+
+// firstPendingID returns the id of the nth candidate by creation order.
+func (fx *fixture) firstPendingID(n int) string {
+	fx.T.Helper()
+	var id string
+	if err := fx.Env.Store.Pool.QueryRow(context.Background(),
+		`SELECT id::text FROM candidates ORDER BY source_ref, created_at, id OFFSET $1 LIMIT 1`, n).Scan(&id); err != nil {
+		fx.T.Fatal(err)
+	}
+	return id
+}
