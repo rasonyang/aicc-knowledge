@@ -110,6 +110,28 @@ make generate    # sqlc
 make api-check   # contract lint and generated code is current
 ```
 
+### Starting and stopping the local stack
+
+```sh
+# Start. Volumes and the TEI model cache are kept between runs, so later starts do not download again.
+make dev-up                                    # PostgreSQL :15432, Meilisearch :17700, SeaweedFS :18333
+KB_TEI_IMAGE=ghcr.io/huggingface/text-embeddings-inference:cpu-arm64-1.9.4 \
+  docker compose up -d --wait tei              # TEI (bge-m3) :18088; the arm64 image is for Apple silicon only
+export KB_TEST_TEI_URL=http://127.0.0.1:18088
+
+# Optional: a local OpenAI-compatible LLM for `generate` and the live-LLM tests (llama.cpp).
+# The first start downloads about 2.5 GB into the Hugging Face cache.
+nohup llama-server -hf unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_K_M --alias local-qwen \
+  --host 127.0.0.1 --port 18100 -c 8192 -ngl 99 --jinja > llama-server.log 2>&1 &
+export KB_TEST_LLM_URL=http://127.0.0.1:18100/v1 KB_TEST_LLM_MODEL=local-qwen
+
+# Stop. The data is kept.
+pkill -f llama-server
+docker compose stop
+```
+
+The Docker VM needs about 8 GiB for TEI alone; do not start a second model container next to it on a 12 GiB VM.
+
 ## Benchmarking on target hardware
 
 Latency figures from a development machine (Apple M3, arm64 TEI image) are not production numbers: TEI's CPU kernels, the model backend and the memory bandwidth all differ on an Intel server. Run the benchmark on the host that will serve traffic.
