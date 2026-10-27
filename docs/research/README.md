@@ -12,6 +12,7 @@ Detailed reports:
 - [02-meilisearch.md](02-meilisearch.md): live probe of Meilisearch v1.54.3.
 - [03-tei-bge-m3.md](03-tei-bge-m3.md): live probe of TEI v1.9.4 serving bge-m3.
 - [04-licenses.md](04-licenses.md): dependency licenses.
+- [05-llm-string-bounds.md](05-llm-string-bounds.md): `maxLength` in the LLM output schema (llama-server probe, OpenAI docs).
 - [probes/](probes/): the probe scripts, so the live checks can be re-run.
 
 **Verdict: no finding contradicts a binding decision.** Caveats are listed

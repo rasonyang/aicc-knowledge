@@ -19,9 +19,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -45,6 +48,11 @@ type Error struct {
 	Code ErrorCode
 	Msg  string
 	Err  error
+	// Status is the HTTP status of a rejected request, 0 otherwise.
+	Status int
+	// CutOff is set when the completion hit the token limit (finish_reason
+	// "length"): the model did not stop by itself.
+	CutOff bool
 }
 
 func (e *Error) Error() string {
@@ -83,7 +91,8 @@ type Config struct {
 	Temperature float64
 	// Seed is sent when non-nil (best-effort determinism).
 	Seed *int64
-	// MaxTokens bounds the completion; 0 means DefaultMaxTokens.
+	// MaxTokens is the ceiling of a completion; 0 means DefaultMaxTokens. A
+	// request may ask for less (Request.MaxTokens), never for more.
 	MaxTokens int
 	// Retries is the number of extra attempts after a retryable failure
 	// (default DefaultRetries; negative means none).
@@ -91,6 +100,9 @@ type Config struct {
 	// Backoff is the wait before the first retry, doubled each time
 	// (default DefaultBackoff).
 	Backoff time.Duration
+	// Logger receives the one warning when string bounds are switched off;
+	// slog.Default() when nil.
+	Logger *slog.Logger
 	// HTTPClient overrides the transport (tests).
 	HTTPClient *http.Client
 }
@@ -122,12 +134,36 @@ type Request struct {
 	// (sent as response_format json_schema, strict).
 	SchemaName string
 	Schema     map[string]any
+	// MaxTokens, when positive and below the configured ceiling, bounds this
+	// completion. Callers derive it from the schema's own bounds.
+	MaxTokens int
 }
 
 // Client calls the endpoint.
 type Client struct {
 	cfg  Config
 	http *http.Client
+	// noBounds is set once a request with string length bounds got HTTP 400
+	// and the same request without them did not: the server does not take
+	// the keywords, and later requests are sent without them.
+	noBounds atomic.Bool
+	warnOnce sync.Once
+}
+
+// StringBoundsOff reports whether the client stopped sending minLength and
+// maxLength because the server rejected them.
+func (c *Client) StringBoundsOff() bool { return c.noBounds.Load() }
+
+func (c *Client) boundsOff(cause *Error) {
+	c.noBounds.Store(true)
+	c.warnOnce.Do(func() {
+		lg := c.cfg.Logger
+		if lg == nil {
+			lg = slog.Default()
+		}
+		lg.Warn("the LLM server rejects string length bounds in the output schema; sending requests without them, so a looping answer is no longer ended by the grammar",
+			"code", "LLM_STRING_BOUNDS_UNSUPPORTED", "cause", cause.Error())
+	})
 }
 
 // New validates cfg and returns a client.
@@ -192,13 +228,25 @@ type chatResponse struct {
 // after validate accepted it (validate may be nil). The returned error is a
 // *Error, or the context's error when ctx ended.
 func (c *Client) CompleteJSON(ctx context.Context, req Request, validate func(content []byte) error) (string, error) {
-	var rf responseFormat
-	rf.Type = "json_schema"
-	rf.JSONSchema.Name, rf.JSONSchema.Strict, rf.JSONSchema.Schema = req.SchemaName, true, req.Schema
-	payload, err := json.Marshal(chatBody{
-		Model: c.cfg.Model, Messages: req.Messages, Temperature: c.cfg.Temperature, Seed: c.cfg.Seed,
-		MaxTokens: c.cfg.MaxTokens, ResponseFormat: rf,
-	})
+	maxTokens := c.cfg.MaxTokens
+	if req.MaxTokens > 0 && req.MaxTokens < maxTokens {
+		maxTokens = req.MaxTokens
+	}
+	encode := func(schema map[string]any) ([]byte, error) {
+		var rf responseFormat
+		rf.Type = "json_schema"
+		rf.JSONSchema.Name, rf.JSONSchema.Strict, rf.JSONSchema.Schema = req.SchemaName, true, schema
+		return json.Marshal(chatBody{
+			Model: c.cfg.Model, Messages: req.Messages, Temperature: c.cfg.Temperature, Seed: c.cfg.Seed,
+			MaxTokens: maxTokens, ResponseFormat: rf,
+		})
+	}
+	schema := req.Schema
+	bounded := HasStringBounds(schema)
+	if bounded && c.noBounds.Load() {
+		schema, bounded = StripStringBounds(schema), false
+	}
+	payload, err := encode(schema)
 	if err != nil {
 		return "", fmt.Errorf("llm: encode request: %w", err)
 	}
@@ -227,6 +275,36 @@ func (c *Client) CompleteJSON(ctx context.Context, req Request, validate func(co
 			return content, nil
 		}
 		last = err
+		// A server that does not know maxLength/minLength in strict mode
+		// answers 400, but a 400 can have other causes (a prompt over the
+		// context size). Send the stripped request once: only when it is not
+		// rejected the bounds were the cause, and the client remembers that
+		// and warns once. Go-side validation stays the authority.
+		if err.Status == http.StatusBadRequest && bounded {
+			bounded = false
+			if p2, err2 := encode(StripStringBounds(schema)); err2 == nil {
+				content2, retry2, serr := c.attempt(ctx, p2)
+				if ctx.Err() != nil {
+					return "", ctx.Err()
+				}
+				if serr == nil {
+					c.boundsOff(err)
+					if validate != nil {
+						if verr := validate([]byte(content2)); verr != nil {
+							return "", &Error{Code: CodeOutputInvalid, Msg: "content does not conform to the schema", Err: verr}
+						}
+					}
+					return content2, nil
+				}
+				// The stripped request failed too: the bounds were not shown
+				// to be the cause and stay on for later requests.
+				last, retry = serr, retry2
+				if serr.Status == http.StatusBadRequest {
+					return "", serr
+				}
+				payload = p2 // another failure (5xx, timeout): carry on with the retries
+			}
+		}
 		if !retry {
 			break
 		}
@@ -259,9 +337,9 @@ func (c *Client) attempt(ctx context.Context, payload []byte) (content string, r
 	}
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
-		return "", true, &Error{Code: CodeUpstreamUnavailable, Msg: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, snippet(body))}
+		return "", true, &Error{Code: CodeUpstreamUnavailable, Msg: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, snippet(body)), Status: resp.StatusCode}
 	case resp.StatusCode >= 400:
-		return "", false, &Error{Code: CodeUpstreamUnavailable, Msg: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, snippet(body))}
+		return "", false, &Error{Code: CodeUpstreamUnavailable, Msg: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, snippet(body)), Status: resp.StatusCode}
 	}
 	var cr chatResponse
 	if err := json.Unmarshal(body, &cr); err != nil || len(cr.Choices) == 0 {
@@ -269,7 +347,7 @@ func (c *Client) attempt(ctx context.Context, payload []byte) (content string, r
 	}
 	ch := cr.Choices[0]
 	if ch.FinishReason == "length" {
-		return "", false, &Error{Code: CodeOutputInvalid, Msg: "completion was cut off at the token limit"}
+		return "", false, &Error{Code: CodeOutputInvalid, Msg: "completion was cut off at the token limit", CutOff: true}
 	}
 	return ch.Message.Content, false, nil
 }
@@ -288,4 +366,56 @@ func snippet(b []byte) string {
 		s = string(r[:200]) + "..."
 	}
 	return s
+}
+
+// HasStringBounds reports whether a schema uses minLength or maxLength.
+func HasStringBounds(v any) bool {
+	switch t := v.(type) {
+	case map[string]any:
+		if _, ok := t["minLength"]; ok {
+			return true
+		}
+		if _, ok := t["maxLength"]; ok {
+			return true
+		}
+		for _, c := range t {
+			if HasStringBounds(c) {
+				return true
+			}
+		}
+	case []any:
+		for _, c := range t {
+			if HasStringBounds(c) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// StripStringBounds returns a copy of the schema without minLength and
+// maxLength. The input is not modified.
+func StripStringBounds(schema map[string]any) map[string]any {
+	return stripValue(schema).(map[string]any)
+}
+
+func stripValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, c := range t {
+			if k == "minLength" || k == "maxLength" {
+				continue
+			}
+			out[k] = stripValue(c)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, c := range t {
+			out[i] = stripValue(c)
+		}
+		return out
+	}
+	return v
 }

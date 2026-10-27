@@ -71,6 +71,12 @@ WHERE id = sqlc.arg(id) AND state = 'PENDING_REVIEW';
 INSERT INTO candidate_reviews (candidate_id, action, reviewer, before, after, source_file_name)
 VALUES ($1, $2, $3, $4, $5, $6);
 
+-- name: ListLiveCandidateQuestions :many
+-- Question and alternates of every candidate of a version in any state but
+-- STALE. `generate --retry-failed` seeds its duplicate check with them.
+SELECT question, alternate_questions FROM candidates
+WHERE file_version_id = $1 AND state <> 'STALE';
+
 -- name: ListLiveCandidateSections :many
 -- The (ordinal, source_ref) of every section of a version that has a
 -- candidate in any state but STALE. Generation uses it to find Q&A rows that

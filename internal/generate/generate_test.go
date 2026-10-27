@@ -164,7 +164,7 @@ func TestPipelineStoresValidatedCandidates(t *testing.T) {
 	}
 
 	sum := h.run()
-	want := Summary{Claimed: 2, Generated: 2, Sections: 6, Candidates: 6, Duplicates: 1}
+	want := Summary{Claimed: 2, Generated: 2, Sections: 6, Candidates: 6, Duplicates: 1, SectionsGenerated: 5, SectionsEmpty: 1}
 	sum.LLMTime = 0
 	if sum != want {
 		t.Fatalf("summary = %+v, want %+v", sum, want)

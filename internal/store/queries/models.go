@@ -109,17 +109,19 @@ type Job struct {
 }
 
 type ParsedSection struct {
-	ID            uuid.UUID `json:"id"`
-	FileVersionID uuid.UUID `json:"fileVersionId"`
-	Ordinal       int32     `json:"ordinal"`
-	Kind          string    `json:"kind"`
-	HeadingPath   []string  `json:"headingPath"`
-	Level         int32     `json:"level"`
-	Body          string    `json:"body"`
-	SourceRef     string    `json:"sourceRef"`
-	QaQuestion    *string   `json:"qaQuestion"`
-	QaAlternates  []string  `json:"qaAlternates"`
-	QaLanguage    *string   `json:"qaLanguage"`
+	ID                uuid.UUID `json:"id"`
+	FileVersionID     uuid.UUID `json:"fileVersionId"`
+	Ordinal           int32     `json:"ordinal"`
+	Kind              string    `json:"kind"`
+	HeadingPath       []string  `json:"headingPath"`
+	Level             int32     `json:"level"`
+	Body              string    `json:"body"`
+	SourceRef         string    `json:"sourceRef"`
+	QaQuestion        *string   `json:"qaQuestion"`
+	QaAlternates      []string  `json:"qaAlternates"`
+	QaLanguage        *string   `json:"qaLanguage"`
+	GenerateOutcome   *string   `json:"generateOutcome"`
+	GenerateErrorCode *string   `json:"generateErrorCode"`
 }
 
 type ProductCatalog struct {

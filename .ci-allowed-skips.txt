@@ -16,3 +16,4 @@ generate.TestRealLLMCondense
 # golden tests; these only add an independent reader where one is available.
 docx.TestRealConsumer
 xlsx.TestRealConsumer
+generate.TestRealLLMStringBoundsEndALoop

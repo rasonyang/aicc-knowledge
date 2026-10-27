@@ -4,6 +4,13 @@ All notable changes to aicc-knowledge are recorded here, newest first.
 
 ## Unreleased
 
+### Fixed (generate: a looping answer lost its section for good)
+
+- The candidates and condense JSON schemas bound every string with `maxLength` (the validation limit plus 25%, per section language), so a grammar-constrained server ends a looping answer early. A request refused with HTTP 400 is sent once more without the bounds; only if that one is accepted does the client switch them off for the run (one `LLM_STRING_BOUNDS_UNSUPPORTED` warning, `string_bounds=off` in the `generate` summary). A 400 for both forms changes nothing. `max_tokens` is derived per request from the same bounds and clamped to the client ceiling. Prompt version `faq-v3`. Research: `docs/research/05-llm-string-bounds.md`.
+- A retry after a first attempt that was cut off or not JSON no longer sends an empty assistant turn; the problem is appended to the original request.
+- `generate` records the outcome of every section it sends (migration 00017, `parsed_sections.generate_outcome`: `GENERATED`, `EMPTY`, `FAILED` with `generate_error_code`). A section the LLM failed on (`LLM_OUTPUT_INVALID`, `CANDIDATES_INVALID`, `UPSTREAM_TIMEOUT`, `UPSTREAM_UNAVAILABLE`) is `FAILED`; a deliberate empty list is `EMPTY` (only the first, unretried answer counts: an empty list after a bad first attempt is `FAILED`). Three LLM failures in a row still requeue the job with nothing written.
+- New `generate --retry-failed [--version <id>]` re-runs exactly the `FAILED` sections of current versions; idempotent, never touches `EMPTY` or `GENERATED` sections or other candidates. The summary line gains `sections_generated`, `sections_empty`, `sections_failed`, `token_cap_hits`; `kb_generate_sections_total` gains `FAILED`, and `EMPTY` now means a deliberate empty list.
+
 ### Added (product catalog and search guard)
 
 - `products.yaml` at the root of `KB_S3_PREFIX` is the product catalog (strict YAML: `products: [{id, names, compatibleWith?}]`). Scan classifies it; parse validates it (unique ids, unique normalized names across products, `compatibleWith` naming known products) and stores it in `product_catalogs` (migration 00014) per file version: `PARSED`, or `PARSE_FAILED` with `CATALOG_INVALID`. A `products.yaml` anywhere else fails `CATALOG_MISPLACED`.

@@ -27,8 +27,17 @@
 //     re-checks the version and the sections under a lock, so a re-run never
 //     duplicates and a section re-derived in the meantime is not resurrected.
 //
-// An infrastructure error (LLM unreachable, database) writes nothing and the
-// job goes back to the queue with backoff.
+// Every section sent to the LLM gets an outcome stored on the parsed section
+// (domain.GenerateOutcome): GENERATED (candidates), EMPTY (the model returned
+// an empty list: nothing to retry) or FAILED (no usable output after the one
+// retry: the output never conformed, no valid candidate was left, or the LLM
+// timed out or was unreachable for that section). `generate --retry-failed`
+// re-runs exactly the FAILED sections of current versions (RetryFailed) and
+// stores only their candidates.
+//
+// An infrastructure error (database, or the LLM failing to answer
+// maxUpstreamFailures sections in a row) writes nothing and the job goes
+// back to the queue with backoff.
 package generate
 
 import (
@@ -72,7 +81,21 @@ const (
 	SkipRemoved          = "REMOVED"
 	SkipNotParsed        = "NOT_PARSED"
 	SkipAlreadyGenerated = "ALREADY_GENERATED"
+	// SkipNothingToRetry: with --retry-failed, the version has no FAILED section.
+	SkipNothingToRetry = "NOTHING_TO_RETRY"
 )
+
+// Error codes recorded for a FAILED section besides the llm package's.
+const (
+	// CodeCandidatesInvalid: the model answered, but every entry broke a rule
+	// (too long, ungrounded figure, wrong language, ...) even after the retry.
+	CodeCandidatesInvalid = "CANDIDATES_INVALID"
+)
+
+// maxUpstreamFailures is how many consecutive sections may fail because the
+// LLM did not answer (timeout, unavailable) before the job is given up as an
+// infrastructure error: the endpoint is down, not the sections.
+const maxUpstreamFailures = 3
 
 // Metric outcome labels.
 const (
@@ -83,7 +106,11 @@ const (
 	SectionOK      = "OK"
 	SectionRetried = "RETRIED"
 	SectionPartial = "PARTIAL"
-	SectionEmpty   = "EMPTY"
+	// SectionEmpty: the model deliberately returned an empty list.
+	SectionEmpty = "EMPTY"
+	// SectionFailed: the section ended with no candidate because the LLM gave
+	// no usable output; `generate --retry-failed` retries it.
+	SectionFailed = "FAILED"
 
 	// Sections that were not sent to the LLM, and why. Each is logged.
 	SectionSkippedStub       = "SKIPPED_STUB"
@@ -120,6 +147,37 @@ type Summary struct {
 	QACondensed       int // Q&A rows whose answer the LLM shortened
 	QADropped         int // Q&A rows that gave no candidate (invalid)
 	QANeedsShortening int // Q&A rows kept with the original answer, flagged NEEDS_SHORTENING
+
+	// Outcomes of the sections sent to the LLM (they add up to Sections).
+	SectionsGenerated int
+	SectionsEmpty     int
+	SectionsFailed    int
+	// CutOff counts completions that hit the token limit.
+	CutOff int
+}
+
+// add merges another run's counts.
+func (s *Summary) add(o Summary) {
+	s.Claimed += o.Claimed
+	s.Generated += o.Generated
+	s.Skipped += o.Skipped
+	s.Errors += o.Errors
+	s.Sections += o.Sections
+	s.Candidates += o.Candidates
+	s.Warnings += o.Warnings
+	s.Duplicates += o.Duplicates
+	s.LLMTime += o.LLMTime
+	s.SkippedStub += o.SkippedStub
+	s.SkippedNoLanguage += o.SkippedNoLanguage
+	s.Truncated += o.Truncated
+	s.QAVerbatim += o.QAVerbatim
+	s.QACondensed += o.QACondensed
+	s.QADropped += o.QADropped
+	s.QANeedsShortening += o.QANeedsShortening
+	s.SectionsGenerated += o.SectionsGenerated
+	s.SectionsEmpty += o.SectionsEmpty
+	s.SectionsFailed += o.SectionsFailed
+	s.CutOff += o.CutOff
 }
 
 // Completer is what the worker needs from the LLM client.
@@ -143,6 +201,9 @@ type Worker struct {
 	// Only, when set, restricts Run to the GENERATE job of that file version:
 	// every other queued job is left alone.
 	Only uuid.UUID
+	// RetryFailed makes every job re-run only the sections recorded FAILED.
+	// Use RetryFailedSections to run it for the current versions.
+	RetryFailed bool
 }
 
 type payload struct {
@@ -186,6 +247,35 @@ func (w *Worker) Enqueue(ctx context.Context, versionID uuid.UUID) (bool, error)
 	return jobs.New(w.Store.Queries).Rearm(ctx, jobs.Enqueue{
 		Kind: jobs.KindGenerate, Payload: payload{FileVersionID: versionID}, DedupeKey: versionID.String(),
 	})
+}
+
+// RetryFailedSections is the operator retry: for every current PARSED version
+// that has FAILED sections (only version, when set), it re-arms the GENERATE
+// job and re-runs exactly those sections. EMPTY and GENERATED sections and the
+// candidates of other sections are not touched, and a version without FAILED
+// sections is not queued, so a second call after a clean run does nothing.
+func (w *Worker) RetryFailedSections(ctx context.Context, only uuid.UUID) (Summary, error) {
+	var total Summary
+	ids, err := w.Store.Queries.ListVersionsWithFailedSections(ctx)
+	if err != nil {
+		return total, fmt.Errorf("list versions with failed sections: %w", err)
+	}
+	for _, id := range ids {
+		if only != uuid.Nil && id != only {
+			continue
+		}
+		c := *w
+		c.Only, c.RetryFailed = id, true
+		if _, err := c.Enqueue(ctx, id); err != nil {
+			return total, err
+		}
+		sum, err := c.Run(ctx)
+		total.add(sum)
+		if err != nil {
+			return total, err
+		}
+	}
+	return total, nil
 }
 
 // Run claims and processes GENERATE jobs until none is claimable.
@@ -276,11 +366,26 @@ func (w *Worker) process(ctx context.Context, queue *jobs.Queue, job jobs.Job, s
 		return 0, "", err
 	}
 	if topUp && len(secs) == 0 {
+		if w.RetryFailed {
+			return skip(SkipNothingToRetry)
+		}
 		return skip(SkipAlreadyGenerated)
 	}
 
 	var drafts []draft
+	var outcomes []sectionOutcome
 	seen := newQuestionSet()
+	if topUp {
+		// Candidates kept from the earlier run count for the duplicate check.
+		kept, err := q.ListLiveCandidateQuestions(ctx, ver.ID)
+		if err != nil {
+			return 0, "", fmt.Errorf("list candidate questions: %w", err)
+		}
+		for _, k := range kept {
+			seen.add(k.Question, k.AlternateQuestions)
+		}
+	}
+	upstreamFailures := 0
 	var stubs []string // text of the stub sections since the last section that was sent
 	for _, s := range secs {
 		var got []draft
@@ -307,6 +412,14 @@ func (w *Worker) process(ctx context.Context, queue *jobs.Queue, job jobs.Job, s
 			}
 			if !d.skipped {
 				stubs = nil
+				outcomes = append(outcomes, sectionOutcome{ordinal: s.Ordinal, sourceRef: s.SourceRef, outcome: d.outcome, code: d.code})
+			}
+			if d.upstream != nil {
+				if upstreamFailures++; upstreamFailures >= maxUpstreamFailures {
+					return 0, "", fmt.Errorf("the LLM did not answer %d sections in a row: %w", upstreamFailures, d.upstream)
+				}
+			} else if !d.skipped {
+				upstreamFailures = 0
 			}
 			got = d.drafts
 		}
@@ -324,7 +437,15 @@ func (w *Worker) process(ctx context.Context, queue *jobs.Queue, job jobs.Job, s
 			return 0, "", err
 		}
 	}
-	return w.persist(ctx, queue, job, ver.ID, drafts, topUp, sum)
+	return w.persist(ctx, queue, job, ver.ID, drafts, outcomes, topUp, sum)
+}
+
+// sectionOutcome is what generate made of one section sent to the LLM.
+type sectionOutcome struct {
+	ordinal   int32
+	sourceRef string
+	outcome   domain.GenerateOutcome
+	code      string // set for FAILED
 }
 
 // selectSections decides which sections a job works on. A version without
@@ -333,6 +454,15 @@ func (w *Worker) process(ctx context.Context, queue *jobs.Queue, job jobs.Job, s
 // mapping after the first run, or their candidate went STALE because the row
 // changed) are generated, and when there are none the job is skipped.
 func (w *Worker) selectSections(ctx context.Context, versionID uuid.UUID, secs []queries.ParsedSection) (_ []queries.ParsedSection, topUp bool, _ error) {
+	if w.RetryFailed {
+		var failed []queries.ParsedSection
+		for _, s := range secs {
+			if s.GenerateOutcome != nil && domain.GenerateOutcome(*s.GenerateOutcome) == domain.GenerateFailed {
+				failed = append(failed, s)
+			}
+		}
+		return failed, true, nil
+	}
 	n, err := w.Store.Queries.CountCandidatesOfVersion(ctx, versionID)
 	if err != nil {
 		return nil, false, fmt.Errorf("count candidates: %w", err)
@@ -468,6 +598,11 @@ func decodeOutput(content []byte) (*output, error) {
 type sectionResult struct {
 	drafts  []draft
 	skipped bool // not sent to the LLM
+	// outcome and code (for FAILED) are the section's recorded outcome.
+	outcome domain.GenerateOutcome
+	code    string
+	// upstream is set when the section failed because the LLM did not answer.
+	upstream error
 }
 
 // section runs the LLM over one non-stub section, with at most one retry, and
@@ -496,15 +631,17 @@ func (w *Worker) section(ctx context.Context, objectKey string, s queries.Parsed
 	msgs := messages(lang, w.Limits, docTitle(objectKey), s.HeadingPath, extra, body)
 	good, bad, raw, err := w.attempt(ctx, msgs, lang, source, sum)
 	if err != nil {
-		return sectionResult{}, err
+		return w.upstreamFailure(ctx, objectKey, s, lang, err, sum)
 	}
 	retried := false
+	var firstProblems []problem // what the first attempt got wrong
 	if len(bad) > 0 {
 		retried = true
+		firstProblems = bad
 		w.log().Info("section needs a retry", "sourceRef", s.SourceRef, "problems", len(bad))
-		good2, bad2, _, err := w.attempt(ctx, append(msgs, feedback(raw, bad)...), lang, source, sum)
+		good2, bad2, _, err := w.attempt(ctx, retryMessages(msgs, raw, bad), lang, source, sum)
 		if err != nil {
-			return sectionResult{}, err
+			return w.upstreamFailure(ctx, objectKey, s, lang, err, sum)
 		}
 		good, bad = mergeDrafts(good, good2), bad2
 	}
@@ -518,19 +655,54 @@ func (w *Worker) section(ctx context.Context, objectKey string, s queries.Parsed
 			"sourceRef", s.SourceRef, "key", objectKey, "problem", p.String())
 	}
 	w.count(ctx, string(lang), OutcomeCreated, 0) // keeps the series visible
-	outcome := SectionOK
+	res := sectionResult{drafts: good, outcome: domain.GenerateGenerated}
+	metric := SectionOK
 	switch {
+	case len(good) == 0 && !retried:
+		// The first, unretried answer is a valid empty list: the model found
+		// nothing to ask.
+		res.outcome, metric = domain.GenerateEmpty, SectionEmpty
+		sum.SectionsEmpty++
 	case len(good) == 0:
-		outcome = SectionEmpty
+		// Nothing usable was left, either because the retry's entries were
+		// all invalid or because the retry returned an empty list after a
+		// first attempt that had tried to answer: the section states an
+		// answer and has no candidate, which is what a retry is for.
+		res.outcome, res.code, metric = domain.GenerateFailed, CodeCandidatesInvalid, SectionFailed
+		if p := append(append([]problem{}, bad...), firstProblems...); p[0].Index == 0 {
+			res.code = string(llm.CodeOutputInvalid)
+		}
+		sum.SectionsFailed++
+		w.log().Warn("section failed: no valid candidate", "sourceRef", s.SourceRef, "key", objectKey, "code", res.code)
 	case len(bad) > 0:
-		outcome = SectionPartial
+		metric = SectionPartial
+		sum.SectionsGenerated++
 	case retried:
-		outcome = SectionRetried
+		metric = SectionRetried
+		sum.SectionsGenerated++
+	default:
+		sum.SectionsGenerated++
 	}
 	if w.Metrics != nil {
-		w.Metrics.ObserveGenerateSection(ctx, outcome)
+		w.Metrics.ObserveGenerateSection(ctx, metric)
 	}
-	return sectionResult{drafts: good}, nil
+	return res, nil
+}
+
+// upstreamFailure turns an LLM transport failure (timeout, unavailable) into a
+// FAILED section. Any other error, including the context's, is returned.
+func (w *Worker) upstreamFailure(ctx context.Context, objectKey string, s queries.ParsedSection, lang domain.Language, err error, sum *Summary) (sectionResult, error) {
+	var le *llm.Error
+	if ctx.Err() != nil || !errors.As(err, &le) {
+		return sectionResult{}, err
+	}
+	sum.SectionsFailed++
+	w.count(ctx, string(lang), OutcomeCreated, 0)
+	w.log().Warn("section failed: the LLM did not answer", "sourceRef", s.SourceRef, "key", objectKey, "code", string(le.Code), "error", err)
+	if w.Metrics != nil {
+		w.Metrics.ObserveGenerateSection(ctx, SectionFailed)
+	}
+	return sectionResult{outcome: domain.GenerateFailed, code: string(le.Code), upstream: err}, nil
 }
 
 // skipped logs and counts a section that was not sent to the LLM. A skipped
@@ -664,7 +836,7 @@ func mergeDrafts(first, second []draft) []draft {
 // the model's raw content (for the feedback turn). Content that is not valid
 // JSON of the schema is one problem with Index 0.
 func (w *Worker) attempt(ctx context.Context, msgs []llm.Message, lang domain.Language, source string, sum *Summary) (good []draft, bad []problem, raw string, _ error) {
-	content, err := w.complete(ctx, msgs, schemaName, schema, func(b []byte) error {
+	content, err := w.complete(ctx, msgs, schemaName, schemaFor(lang, w.Limits), maxTokensFor(lang, w.Limits), func(b []byte) error {
 		_, err := decodeOutput(b)
 		return err
 	}, sum)
@@ -698,9 +870,9 @@ func (w *Worker) attempt(ctx context.Context, msgs []llm.Message, lang domain.La
 }
 
 // complete makes one LLM request, timed and counted.
-func (w *Worker) complete(ctx context.Context, msgs []llm.Message, name string, schema map[string]any, validate func([]byte) error, sum *Summary) (string, error) {
+func (w *Worker) complete(ctx context.Context, msgs []llm.Message, name string, schema map[string]any, maxTokens int, validate func([]byte) error, sum *Summary) (string, error) {
 	start := time.Now()
-	content, err := w.LLM.CompleteJSON(ctx, llm.Request{Messages: msgs, SchemaName: name, Schema: schema}, validate)
+	content, err := w.LLM.CompleteJSON(ctx, llm.Request{Messages: msgs, SchemaName: name, Schema: schema, MaxTokens: maxTokens}, validate)
 	elapsed := time.Since(start)
 	sum.LLMTime += elapsed
 	outcome := "OK"
@@ -709,6 +881,9 @@ func (w *Worker) complete(ctx context.Context, msgs []llm.Message, name string, 
 		outcome = "ERROR"
 		if errors.As(err, &le) {
 			outcome = string(le.Code)
+			if le.CutOff {
+				sum.CutOff++
+			}
 		}
 	}
 	if w.Metrics != nil && ctx.Err() == nil {
@@ -722,7 +897,7 @@ type skipError struct{ reason string }
 func (e *skipError) Error() string { return "skipped: " + e.reason }
 
 // persist stores the drafts of a version in one transaction.
-func (w *Worker) persist(ctx context.Context, queue *jobs.Queue, job jobs.Job, versionID uuid.UUID, drafts []draft, topUp bool, sum *Summary) (int, string, error) {
+func (w *Worker) persist(ctx context.Context, queue *jobs.Queue, job jobs.Job, versionID uuid.UUID, drafts []draft, outcomes []sectionOutcome, topUp bool, sum *Summary) (int, string, error) {
 	stored := 0
 	err := pgx.BeginFunc(ctx, w.Store.Pool, func(tx pgx.Tx) error {
 		stored = 0
@@ -769,6 +944,18 @@ func (w *Worker) persist(ctx context.Context, queue *jobs.Queue, job jobs.Job, v
 			if n == 1 {
 				stored++
 				w.count(ctx, string(d.language), OutcomeCreated, 1)
+			}
+		}
+		for _, o := range outcomes {
+			var code *string
+			if o.outcome == domain.GenerateFailed {
+				code = &o.code
+			}
+			outcome := string(o.outcome)
+			if _, err := q.SetSectionGenerateOutcome(ctx, queries.SetSectionGenerateOutcomeParams{
+				Outcome: &outcome, ErrorCode: code, FileVersionID: versionID, Ordinal: o.ordinal, SourceRef: o.sourceRef,
+			}); err != nil {
+				return fmt.Errorf("record section outcome: %w", err)
 			}
 		}
 		return jobs.New(q).Complete(ctx, job.ID, w.name())

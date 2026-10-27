@@ -586,6 +586,24 @@ func (w *Worker) writeSections(ctx context.Context, q *queries.Queries, id uuid.
 	if n, err := q.InsertParsedSections(ctx, rows); err != nil || n != int64(len(rows)) {
 		return fmt.Errorf("insert sections: inserted %d of %d: %v", n, len(rows), err)
 	}
+	// A section whose text did not change keeps what generate made of it.
+	next := map[[2]string]string{}
+	for _, s := range secs {
+		next[[2]string{fmt.Sprint(s.ordinal), s.sourceRef}] = s.body
+	}
+	for _, o := range old {
+		if o.GenerateOutcome == nil || next[[2]string{fmt.Sprint(o.Ordinal), o.SourceRef}] != o.Body {
+			continue
+		}
+		if _, ok := next[[2]string{fmt.Sprint(o.Ordinal), o.SourceRef}]; !ok {
+			continue
+		}
+		if _, err := q.SetSectionGenerateOutcome(ctx, queries.SetSectionGenerateOutcomeParams{
+			Outcome: o.GenerateOutcome, ErrorCode: o.GenerateErrorCode, FileVersionID: id, Ordinal: o.Ordinal, SourceRef: o.SourceRef,
+		}); err != nil {
+			return fmt.Errorf("carry over generate outcome: %w", err)
+		}
+	}
 	// A candidate belongs to a section by (ordinal, source_ref). Sections that
 	// were derived again may have dropped some (a facts mapping now covers the
 	// sheet), and their candidates can no longer be checked against the source.

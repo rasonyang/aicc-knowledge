@@ -22,6 +22,10 @@ type Call struct {
 	// N is the 1-based sequence number of the call.
 	N        int
 	Messages []llm.Message
+	// MaxTokens and Schema are the request's max_tokens and the JSON schema of
+	// its response_format.
+	MaxTokens int
+	Schema    map[string]any
 }
 
 // User returns the content of the first user message (the section text).
@@ -41,8 +45,12 @@ func (c Call) Last() string { return c.Messages[len(c.Messages)-1].Content }
 // Fail to answer with an HTTP error instead.
 type Handler func(c Call) (content string, fail *Fail)
 
-// Fail makes the server answer with this HTTP status.
-type Fail struct{ Status int }
+// Fail makes the server answer with this HTTP status, or, with CutOff, with a
+// 200 whose completion stopped at the token limit (finish_reason "length").
+type Fail struct {
+	Status int
+	CutOff bool
+}
 
 // Server is the fake endpoint.
 type Server struct {
@@ -57,17 +65,29 @@ func New(t testing.TB, h Handler) *Server {
 	s := &Server{}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Messages []llm.Message `json:"messages"`
+			Messages       []llm.Message `json:"messages"`
+			MaxTokens      int           `json:"max_tokens"`
+			ResponseFormat struct {
+				JSONSchema struct {
+					Schema map[string]any `json:"schema"`
+				} `json:"json_schema"`
+			} `json:"response_format"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		s.mu.Lock()
-		call := Call{N: len(s.calls) + 1, Messages: body.Messages}
+		call := Call{N: len(s.calls) + 1, Messages: body.Messages, MaxTokens: body.MaxTokens, Schema: body.ResponseFormat.JSONSchema.Schema}
 		s.calls = append(s.calls, call)
 		s.mu.Unlock()
 		content, fail := h(call)
+		if fail != nil && fail.CutOff {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{
+				"message": map[string]any{"role": "assistant", "content": `{"candidates":[{"question":"q","answ`}, "finish_reason": "length"}}})
+			return
+		}
 		if fail != nil {
 			http.Error(w, "scripted failure", fail.Status)
 			return
