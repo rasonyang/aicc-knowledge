@@ -1,0 +1,1634 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# NovaNet question set. Every question is something a caller could say, with the
+# source section that answers it. The format is documented in README.md and
+# enforced by TestQuestions in demo/novanet/gen.
+#
+# expect: the sections that answer the question. Any one of them is a correct
+#   hit. An empty list means the right answer is NO_MATCH.
+#   file     object key of the source, relative to the corpus root
+#   section  docx: the heading path joined with " > ", as in the source_ref
+#            xlsx content: the range, e.g. "Halls!A2:C16"
+#            Q&A workbook: the row, e.g. "Quick answers!A5"
+#            source_ref = file + "#" + section (+ "#" + ordinal for a docx)
+#   fact     text that occurs verbatim in the section and that a correct
+#            answer must state; it tells the right candidate apart when
+#            several come from one section
+# avoid: sections that look like an answer but are wrong (the replaced policy
+#   version, a stale Q&A row, an expired promotion).
+# factLookup: the fact table that also answers the question (see facts/).
+
+questions:
+  # ------------------------------------------------------------------ COVERED, English
+  - id: q-en-001
+    language: EN
+    text: "How much data does Plan 59 Plus have?"
+    category: COVERED
+    tags: [near_duplicate, needs_fact_table]
+    liveExample: true
+    factLookup: {table: plans, key: {plan: "Plan 59 Plus"}}
+    expect:
+      - file: en/faq/plan-faq.docx
+        section: "Plan FAQ > How much data does Plan 59 Plus include?"
+        fact: "60 GB"
+      - file: en/plans/plan-59-plus-sheet.docx
+        section: "Plan 59 Plus plan sheet > Included allowances"
+        fact: "60 GB of data"
+    note: "Plan 59 and Plan 59 Plus differ by one word; the answer must be 60 GB, not 30 GB."
+
+  - id: q-en-002
+    language: EN
+    text: "how much data do I get with plan 59"
+    category: COVERED
+    tags: [near_duplicate, colloquial]
+    expect:
+      - file: en/faq/plan-faq.docx
+        section: "Plan FAQ > How much data does Plan 59 include?"
+        fact: "30 GB"
+
+  - id: q-en-003
+    language: EN
+    text: "How many call minutes does plan fifty nine plus come with?"
+    category: COVERED
+    tags: [spoken_numbers, near_duplicate]
+    expect:
+      - file: en/faq/plan-faq.docx
+        section: "Plan FAQ > How many minutes in Plan 59 Plus?"
+        fact: "500 voice minutes"
+    note: "The spoken name matches no catalog alias, so the guard cannot separate it from Plan 59."
+
+  - id: q-en-004
+    language: EN
+    text: "How long is the contract on Fiber 500?"
+    category: COVERED
+    tags: [near_duplicate]
+    expect:
+      - file: en/plans/fiber-500-sheet.docx
+        section: "Fiber 500 home broadband > Contract and early termination"
+        fact: "12-month contract"
+      - file: en/plans/broadband-plans-compared.docx
+        section: "Home broadband plans compared > Which home broadband plans are there?"
+        fact: "Contract | 12 months | 24 months"
+
+  - id: q-en-005
+    language: EN
+    text: "Do I have to pay for installation if I take Fiber 1000?"
+    category: COVERED
+    tags: [near_duplicate, indirect]
+    liveExample: true
+    expect:
+      - file: en/faq/plan-faq.docx
+        section: "Plan FAQ > Is Fiber 1000 installation free?"
+        fact: "installation is free"
+      - file: en/plans/fiber-1000-sheet.docx
+        section: "Fiber 1000 home broadband > How much is installation for Fiber 1000?"
+        fact: "Installation is free"
+
+  - id: q-en-006
+    language: EN
+    text: "What does the router that comes with Fiber 500 look like, which model is it?"
+    category: COVERED
+    tags: [indirect, product_confusion]
+    expect:
+      - file: en/faq/plan-faq.docx
+        section: "Plan FAQ > Which router comes with Fiber 500?"
+        fact: "R3 router"
+
+  - id: q-en-007
+    language: EN
+    text: "Does the unused data on Plan 59 Plus carry over to next month?"
+    category: COVERED
+    tags: [near_duplicate, indirect]
+    expect:
+      - file: en/faq/plan-faq.docx
+        section: "Plan FAQ > Does Plan 59 Plus data roll over?"
+        fact: "Up to 10 GB"
+      - file: en/plans/plan-59-plus-sheet.docx
+        section: "Plan 59 Plus plan sheet > Data rollover"
+        fact: "Up to 10 GB of unused data rolls over"
+
+  - id: q-en-008
+    language: EN
+    text: "Can I roll over my leftover data on Plan 59?"
+    category: COVERED
+    tags: [near_duplicate, product_confusion]
+    expect:
+      - file: en/faq/plan-faq.docx
+        section: "Plan FAQ > Does Plan 59 data roll over?"
+        fact: "lost at the end of the month"
+
+  - id: q-en-009
+    language: EN
+    text: "How much would it cost me to cancel Plan 59 Plus early?"
+    category: COVERED
+    tags: [near_duplicate, policy_change, needs_fact_table]
+    expect:
+      - file: en/policies/contract-and-early-termination-policy-v3.docx
+        section: "Contract Policy, version 3 > Early termination fee"
+        fact: "Plan 59 Plus | 200"
+      - file: en/faq/plan-faq.docx
+        section: "Plan FAQ > Plan 59 Plus cancellation fee?"
+        fact: "200 yuan"
+    avoid:
+      - file: en/policies/contract-and-early-termination-policy-v2.docx
+        section: "Contract Policy, version 2 > Early termination fee"
+    factLookup: {table: plans, key: {plan: "Plan 59 Plus"}}
+    note: "Version 2 of the policy states 300 yuan for the period until 30 June 2026."
+
+  - id: q-en-010
+    language: EN
+    text: "What is the early termination fee for Fiber 1000?"
+    category: COVERED
+    tags: [policy_change, near_duplicate, needs_fact_table]
+    expect:
+      - file: en/policies/contract-and-early-termination-policy-v3.docx
+        section: "Contract Policy, version 3 > Early termination fee"
+        fact: "Fiber 1000 | 400"
+      - file: en/plans/fiber-1000-sheet.docx
+        section: "Fiber 1000 home broadband > Fiber 1000 contract and fee?"
+        fact: "400 yuan"
+    avoid:
+      - file: en/policies/contract-and-early-termination-policy-v2.docx
+        section: "Contract Policy, version 2 > Early termination fee"
+    factLookup: {table: plans, key: {plan: "Fiber 1000"}}
+
+  - id: q-en-011
+    language: EN
+    text: "How many days do I have to change my mind after signing up?"
+    category: COVERED
+    tags: [policy_change, indirect, stale_source]
+    expect:
+      - file: en/policies/contract-and-early-termination-policy-v3.docx
+        section: "Contract Policy, version 3 > Cooling-off period"
+        fact: "the cooling-off period is 15 days"
+    avoid:
+      - file: en/policies/contract-and-early-termination-policy-v2.docx
+        section: "Contract Policy, version 2 > Cooling-off period"
+      - file: en/faq/customer-care-quick-answers.xlsx
+        section: "Quick answers!A14"
+    note: "The Q&A workbook still has the 7 days of the replaced policy. The current answer is 15 days from 1 July 2026."
+
+  - id: q-en-012
+    language: EN
+    text: "What is the late fee if I pay my bill late?"
+    category: COVERED
+    tags: [policy_change]
+    liveExample: true
+    expect:
+      - file: en/policies/late-payment-and-suspension-policy-v2.docx
+        section: "Late Payment Policy, version 2 > Late fee"
+        fact: "the late fee is 1 percent of the overdue amount"
+      - file: en/faq/customer-care-quick-answers.xlsx
+        section: "Quick answers!A13"
+        fact: "1 percent of the overdue amount"
+    avoid:
+      - file: en/policies/late-payment-and-suspension-policy-v1.docx
+        section: "Late Payment Policy, version 1 > Late fee"
+
+  - id: q-en-013
+    language: EN
+    text: "How many days do I get before they start charging me for a late payment?"
+    category: COVERED
+    tags: [policy_change, colloquial]
+    expect:
+      - file: en/policies/late-payment-and-suspension-policy-v2.docx
+        section: "Late Payment Policy, version 2 > Grace period"
+        fact: "the grace period is 10 days after the due date"
+    avoid:
+      - file: en/policies/late-payment-and-suspension-policy-v1.docx
+        section: "Late Payment Policy, version 1 > Grace period"
+
+  - id: q-en-014
+    language: EN
+    text: "How long after the due date do you cut off my service if I don't pay?"
+    category: COVERED
+    tags: [policy_change, colloquial]
+    expect:
+      - file: en/policies/late-payment-and-suspension-policy-v2.docx
+        section: "Late Payment Policy, version 2 > When is service suspended?"
+        fact: "20 days after the due date"
+    avoid:
+      - file: en/policies/late-payment-and-suspension-policy-v1.docx
+        section: "Late Payment Policy, version 1 > When is service suspended?"
+
+  - id: q-en-015
+    language: EN
+    text: "How many times can I move my broadband to a new home for free?"
+    category: COVERED
+    tags: [policy_change]
+    expect:
+      - file: en/policies/contract-and-early-termination-policy-v3.docx
+        section: "Contract Policy, version 3 > Moving house"
+        fact: "two free relocations"
+    avoid:
+      - file: en/policies/contract-and-early-termination-policy-v2.docx
+        section: "Contract Policy, version 2 > Moving house"
+
+  - id: q-en-016
+    language: EN
+    text: "Can I switch to a cheaper plan before my contract is over?"
+    category: COVERED
+    tags: [policy_change, indirect]
+    expect:
+      - file: en/policies/contract-and-early-termination-policy-v3.docx
+        section: "Contract Policy, version 3 > Plan downgrade during the contract"
+        fact: "once every 12 months"
+    avoid:
+      - file: en/policies/contract-and-early-termination-policy-v2.docx
+        section: "Contract Policy, version 2 > Plan downgrade during the contract"
+
+  - id: q-en-017
+    language: EN
+    text: "Why is my bill higher this month?"
+    category: COVERED
+    tags: [colloquial, indirect]
+    liveExample: true
+    expect:
+      - file: en/billing/how-to-read-your-bill.docx
+        section: "How to read your bill > Why is my bill higher this month?"
+        fact: "Booster or roaming pack bought during the month"
+    note: "Judgment call: the document lists the usual reasons. It cannot say why this caller's bill is higher, so the answer must send the caller to the bill in the app."
+
+  - id: q-en-018
+    language: EN
+    text: "My bill looks weird for the first month, why isn't it a round number?"
+    category: COVERED
+    tags: [colloquial]
+    expect:
+      - file: en/billing/how-to-read-your-bill.docx
+        section: "How to read your bill > Why is my first bill odd?"
+        fact: "prorated by day"
+
+  - id: q-en-019
+    language: EN
+    text: "Can I change the day my bill comes out?"
+    category: COVERED
+    tags: [indirect]
+    expect:
+      - file: en/billing/change-billing-date.docx
+        section: "Changing your bill date > Can I change my bill date?"
+        fact: "the 1st, the 10th or the 20th"
+
+  - id: q-en-020
+    language: EN
+    text: "I need a receipt for my company, how do I get an invoice?"
+    category: COVERED
+    tags: [indirect, qa_workbook]
+    expect:
+      - file: en/billing/e-invoice.docx
+        section: "Electronic invoices > How do I get an invoice?"
+        fact: "within 3 business days"
+      - file: en/faq/customer-care-quick-answers.xlsx
+        section: "Quick answers!A11"
+        fact: "within 3 business days"
+
+  - id: q-en-021
+    language: EN
+    text: "How do I reset the R5 Pro?"
+    category: COVERED
+    tags: [near_duplicate, product_confusion, qa_workbook]
+    expect:
+      - file: en/devices/r5-pro-user-guide.docx
+        section: "NovaNet R5 Pro user guide > How do I reset the R5 Pro?"
+        fact: "for 10 seconds"
+      - file: en/faq/customer-care-quick-answers.xlsx
+        section: "Quick answers!A25"
+        fact: "10 seconds"
+    note: "R3 is 5 seconds, R5 is 8 seconds, R5 Pro is 10 seconds."
+
+  - id: q-en-022
+    language: EN
+    text: "how long do I hold the reset button on the R5"
+    category: COVERED
+    tags: [near_duplicate, product_confusion, colloquial]
+    expect:
+      - file: en/devices/r5-user-guide.docx
+        section: "NovaNet R5 user guide > How do I reset the R5?"
+        fact: "for 8 seconds"
+      - file: en/faq/customer-care-quick-answers.xlsx
+        section: "Quick answers!A24"
+        fact: "8 seconds"
+
+  - id: q-en-023
+    language: EN
+    text: "Does the M1 extender work with my R3 router?"
+    category: COVERED
+    tags: [product_confusion]
+    expect:
+      - file: en/devices/m1-user-guide.docx
+        section: "NovaNet M1 user guide > Which plans use the M1?"
+        fact: "It does not work with the R3"
+      - file: en/devices/device-compatibility.xlsx
+        section: "Compatibility!A2:D9"
+        fact: "M1 mesh extender | R5 and R5 Pro | R3"
+
+  - id: q-en-024
+    language: EN
+    text: "How many M1 extenders can I add to an R5 Pro?"
+    category: COVERED
+    tags: [product_confusion, near_duplicate]
+    expect:
+      - file: en/support/broadband/dead-zones-at-home.docx
+        section: "Weak Wi-Fi in some rooms > How many M1 extenders can I add?"
+        fact: "an R5 Pro with up to 4"
+      - file: en/devices/r5-pro-user-guide.docx
+        section: "NovaNet R5 Pro user guide > Which plans use the R5 Pro?"
+        fact: "up to 4 M1 mesh extenders"
+
+  - id: q-en-025
+    language: EN
+    text: "what's the difference between the T2 and the T2 Max"
+    category: COVERED
+    tags: [near_duplicate, product_confusion]
+    expect:
+      - file: en/devices/tv-box-models-compared.docx
+        section: "TV box models compared > T2 or T2 Max: what is different?"
+        fact: "4K HDR at 60 frames per second"
+
+  - id: q-en-026
+    language: EN
+    text: "My router has a red light on the Internet button and nothing works"
+    category: COVERED
+    tags: [colloquial, qa_workbook]
+    expect:
+      - file: en/support/broadband/internet-light-is-red.docx
+        section: "The Internet light on my router is red > What does a red Internet light mean?"
+        fact: "cannot reach the internet"
+      - file: en/faq/customer-care-quick-answers.xlsx
+        section: "Quick answers!A29"
+        fact: "cannot reach the internet"
+
+  - id: q-en-027
+    language: EN
+    text: "Is Fiber 1000 available in Egret Isle?"
+    category: COVERED
+    tags: [district]
+    expect:
+      - file: en/network/service-areas/area-09.docx
+        section: "Egret Isle coverage > Coverage in Egret Isle"
+        fact: "Fiber 1000 is not available in Egret Isle yet"
+      - file: en/network/coverage-list.xlsx
+        section: "Coverage!A2:E31"
+        fact: "Egret Isle | available | not available"
+
+  - id: q-en-028
+    language: EN
+    text: "How many days does it take to get broadband installed in Starwave Bay?"
+    category: COVERED
+    tags: [district]
+    expect:
+      - file: en/network/service-areas/area-01.docx
+        section: "Starwave Bay service area > Install time in Starwave Bay?"
+        fact: "2 business days"
+
+  - id: q-en-029
+    language: EN
+    text: "When will Brocadesail Harbor get fiber?"
+    category: COVERED
+    tags: [district, indirect]
+    expect:
+      - file: en/network/service-areas/area-08.docx
+        section: "Service area record Brocadesail Harbor > Notes for Brocadesail Harbor"
+        fact: "March 2027"
+
+  - id: q-en-030
+    language: EN
+    text: "What time does the Greenlotus Ward service hall open, and is it closed on Mondays?"
+    category: COVERED
+    tags: [district, colloquial]
+    expect:
+      - file: en/stores/service-hall-03.docx
+        section: "Greenlotus Ward Service Hall > Greenlotus Ward hall opening hours"
+        fact: "closed on Monday"
+
+  - id: q-en-031
+    language: EN
+    text: "How long will the work in Starwave Bay on 8 November take?"
+    category: COVERED
+    tags: [district]
+    expect:
+      - file: en/network/notices/notice-001.docx
+        section: "Notice N-001, Starwave Bay work > How long will the work take?"
+        fact: "up to 4 hours"
+
+  - id: q-en-032
+    language: EN
+    text: "How long does a call-center recording stay on file?"
+    category: COVERED
+    tags: [deep_in_long_doc, indirect]
+    expect:
+      - file: en/handbooks/customer-service-handbook.docx
+        section: "Customer Service Handbook > Call recording and privacy"
+        fact: "kept for 90 days"
+
+  - id: q-en-033
+    language: EN
+    text: "Is my router still under warranty after a year?"
+    category: COVERED
+    tags: [deep_in_long_doc, indirect, qa_workbook]
+    expect:
+      - file: en/handbooks/customer-service-handbook.docx
+        section: "Customer Service Handbook > Equipment warranty"
+        fact: "24-month warranty"
+      - file: en/faq/customer-care-quick-answers.xlsx
+        section: "Quick answers!A22"
+        fact: "24-month warranty"
+
+  - id: q-en-034
+    language: EN
+    text: "How far ahead do I have to tell you I'm moving house?"
+    category: COVERED
+    tags: [deep_in_long_doc, indirect]
+    expect:
+      - file: en/handbooks/customer-service-handbook.docx
+        section: "Customer Service Handbook > Moving your service"
+        fact: "at least 7 days before the move"
+
+  - id: q-en-035
+    language: EN
+    text: "Can I open ports on my router to reach my security camera from outside?"
+    category: COVERED
+    tags: [deep_in_long_doc, indirect]
+    expect:
+      - file: en/handbooks/home-network-handbook.docx
+        section: "Home Network Handbook > Port forwarding"
+        fact: "forwarding from outside the home is not supported"
+
+  - id: q-en-036
+    language: EN
+    text: "What do I do after I enter the wrong PIN three times?"
+    category: COVERED
+    tags: [deep_in_long_doc]
+    expect:
+      - file: en/handbooks/mobile-services-handbook.docx
+        section: "Mobile Services Handbook > PIN and PUK"
+        fact: "After 3 wrong tries the PUK code is needed"
+
+  - id: q-en-037
+    language: EN
+    text: "What are the customer care hours?"
+    category: COVERED
+    tags: [short_doc]
+    expect:
+      - file: en/short/customer-care-hours.docx
+        section: "What are the customer care hours?"
+        fact: "8:00 to 22:00"
+
+  - id: q-en-038
+    language: EN
+    text: "Do you sell phones?"
+    category: COVERED
+    tags: [short_doc, colloquial]
+    expect:
+      - file: en/short/does-novanet-sell-phones.docx
+        section: "Does NovaNet sell phones?"
+        fact: "not mobile phones"
+
+  - id: q-en-039
+    language: EN
+    text: "How many devices can connect to my phone hotspot at once?"
+    category: COVERED
+    tags: [short_doc]
+    expect:
+      - file: en/short/hotspot-device-limit.docx
+        section: "How many devices can use my hotspot?"
+        fact: "Up to 8 devices"
+
+  - id: q-en-040
+    language: EN
+    text: "Can I get a fixed IP address with my home broadband?"
+    category: COVERED
+    tags: [short_doc]
+    expect:
+      - file: en/short/fixed-ip.docx
+        section: "Do home plans have a fixed IP address?"
+        fact: "No."
+      - file: en/handbooks/home-network-handbook.docx
+        section: "Home Network Handbook > Fixed IP address"
+        fact: "Home plans do not include a fixed IP address"
+
+  - id: q-en-041
+    language: EN
+    text: "How much is the Asia 3 Day roaming pack?"
+    category: COVERED
+    tags: [needs_fact_table, table_lookup]
+    expect:
+      - file: en/roaming/roaming-packs-and-prices.docx
+        section: "Roaming packs > Which roaming packs are there?"
+        fact: "Asia 3 Day | Asia | 3 | 68"
+    factLookup: {table: roaming_packs, key: {pack: "Asia 3 Day"}}
+    note: "The roaming_packs fact table is deliberately UNAVAILABLE, so the FAQ table is the only way to answer."
+
+  - id: q-en-042
+    language: EN
+    text: "How much does Fiber 500 cost per month?"
+    category: COVERED
+    tags: [needs_fact_table]
+    expect:
+      - file: en/plans/fiber-500-sheet.docx
+        section: "Fiber 500 home broadband > Included speed and equipment"
+        fact: "costs 129 yuan per month"
+      - file: en/plans/broadband-plans-compared.docx
+        section: "Home broadband plans compared > Which home broadband plans are there?"
+        fact: "Monthly fee (yuan) | 129 | 199"
+    factLookup: {table: plans, key: {plan: "Fiber 500"}}
+    note: "The plans fact table has two rows for Fiber 500 (139 until yesterday, 129 from today). The documents state the current price."
+
+  - id: q-en-043
+    language: EN
+    text: "Who is eligible for Senior Care?"
+    category: COVERED
+    tags: [near_duplicate]
+    expect:
+      - file: en/policies/senior-care-eligibility.docx
+        section: "Senior Care eligibility > Who can get Senior Care?"
+        fact: "aged 65 or older"
+      - file: en/plans/senior-care-sheet.docx
+        section: "Senior Care plan sheet > Eligibility"
+        fact: "aged 65 or older"
+
+  - id: q-en-044
+    language: EN
+    text: "Can I use an eSIM on Basic?"
+    category: COVERED
+    tags: [near_duplicate, product_confusion]
+    expect:
+      - file: en/faq/plan-faq.docx
+        section: "Plan FAQ > Can I use eSIM on Basic?"
+        fact: "physical SIM card"
+
+  - id: q-en-045
+    language: EN
+    text: "I'm a new customer, do I get anything free to start with?"
+    category: COVERED
+    tags: [near_duplicate, colloquial]
+    expect:
+      - file: en/faq/new-vs-existing-customers.docx
+        section: "New and existing customers > Welcome offer for new customers?"
+        fact: "20 GB of bonus data"
+
+  - id: q-en-046
+    language: EN
+    text: "I've been with you for years, do I also get the welcome offer?"
+    category: COVERED
+    tags: [near_duplicate, colloquial]
+    expect:
+      - file: en/faq/new-vs-existing-customers.docx
+        section: "New and existing customers > Welcome offer for existing customers?"
+        fact: "for new customers only"
+
+  - id: q-en-047
+    language: EN
+    text: "I already have Fiber 500 and want Fiber 1000, how long does the upgrade take?"
+    category: COVERED
+    tags: [near_duplicate, product_confusion]
+    expect:
+      - file: en/faq/new-vs-existing-customers.docx
+        section: "New and existing customers > Upgrade time for existing customers?"
+        fact: "up to 5 business days"
+
+  - id: q-en-048
+    language: EN
+    text: "What is a Booster pack and how much is Booster 30?"
+    category: COVERED
+    tags: [near_duplicate, qa_workbook]
+    expect:
+      - file: en/addons/booster-data-packs.docx
+        section: "Booster data packs > What is a Booster pack?"
+        fact: "Booster 30 gives 30 GB for 35 yuan"
+
+  - id: q-en-049
+    language: EN
+    text: "Can I pay my bill in cash?"
+    category: COVERED
+    tags: [near_duplicate]
+    expect:
+      - file: en/billing/payment-methods.docx
+        section: "Payment methods > Can I pay in cash?"
+        fact: "at a service hall"
+
+  - id: q-en-050
+    language: EN
+    text: "Do I get compensated if my internet is down for two days?"
+    category: COVERED
+    tags: [indirect]
+    expect:
+      - file: en/policies/service-outage-compensation.docx
+        section: "Service outage compensation > When is outage compensation paid?"
+        fact: "one day of the monthly fee for each full day"
+
+  - id: q-en-051
+    language: EN
+    text: "Is the Asia roaming pack refundable if I never used it?"
+    category: COVERED
+    tags: [indirect]
+    expect:
+      - file: en/roaming/roaming-pack-refunds.docx
+        section: "Roaming pack validity and refunds > Can I get a roaming pack refunded?"
+        fact: "has not started can be refunded in full"
+
+  - id: q-en-052
+    language: EN
+    text: "What happens to my number if I pause my line, and does the contract stop?"
+    category: COVERED
+    tags: [indirect]
+    expect:
+      - file: en/sim/pause-your-line.docx
+        section: "Pausing a line > Does a pause extend my contract?"
+        fact: "The contract keeps running"
+
+  # ------------------------------------------------------------------ COVERED, Chinese
+  - id: q-zh-001
+    language: ZH
+    text: "59元Plus套餐有多少流量？"
+    category: COVERED
+    tags: [near_duplicate, needs_fact_table]
+    liveExample: true
+    factLookup: {table: plans, key: {plan: "Plan 59 Plus"}}
+    expect:
+      - file: zh/faq/套餐常见问题.docx
+        section: "套餐常见问题 > 59元Plus套餐有多少流量？"
+        fact: "60GB"
+      - file: zh/plans/59元Plus套餐资费说明.docx
+        section: "59元Plus套餐资费说明 > 套餐包含内容"
+        fact: "60GB流量"
+    note: "与59元套餐只差一个Plus；答案必须是60GB，不是30GB。"
+
+  - id: q-zh-002
+    language: ZH
+    text: "五十九块的套餐一个月给多少流量"
+    category: COVERED
+    tags: [spoken_numbers, near_duplicate, colloquial]
+    expect:
+      - file: zh/faq/套餐常见问题.docx
+        section: "套餐常见问题 > 59元套餐有多少流量？"
+        fact: "30GB"
+    note: "口语里的“五十九块”不在产品目录别名里，防护规则无法识别，只能靠相似度。"
+
+  - id: q-zh-003
+    language: ZH
+    text: "59 Plus 的合约是几年的"
+    category: COVERED
+    tags: [near_duplicate, mixed_language, colloquial]
+    expect:
+      - file: zh/faq/套餐常见问题.docx
+        section: "套餐常见问题 > 59元Plus套餐合约多久？"
+        fact: "24个月"
+
+  - id: q-zh-004
+    language: ZH
+    text: "光纤五百的合约期是多久"
+    category: COVERED
+    tags: [near_duplicate, spoken_numbers]
+    expect:
+      - file: zh/plans/光纤500家庭宽带资费说明.docx
+        section: "光纤500家庭宽带资费说明 > 合约期与提前解约"
+        fact: "合约期为12个月"
+
+  - id: q-zh-005
+    language: ZH
+    text: "光纤1000装宽带要不要收安装费"
+    category: COVERED
+    tags: [near_duplicate]
+    expect:
+      - file: zh/faq/套餐常见问题.docx
+        section: "套餐常见问题 > 光纤1000安装免费吗？"
+        fact: "不收安装费"
+      - file: zh/plans/光纤1000家庭宽带资费说明.docx
+        section: "光纤1000家庭宽带资费说明 > 光纤1000安装费多少？"
+        fact: "免收安装费"
+
+  - id: q-zh-006
+    language: ZH
+    text: "光线五百送的路由器是哪个型号"
+    category: COVERED
+    tags: [asr_error, near_duplicate]
+    expect:
+      - file: zh/faq/套餐常见问题.docx
+        section: "套餐常见问题 > 光纤500送什么路由器？"
+        fact: "R3路由器"
+    note: "语音识别把“光纤”写成“光线”。别名表里故意没有这个写法，所以防护规则不起作用。"
+
+  - id: q-zh-007
+    language: ZH
+    text: "59元Plus套餐没用完的流量能留到下个月吗"
+    category: COVERED
+    tags: [near_duplicate, indirect]
+    expect:
+      - file: zh/faq/套餐常见问题.docx
+        section: "套餐常见问题 > 59元Plus套餐流量能结转吗？"
+        fact: "最多10GB"
+
+  - id: q-zh-008
+    language: ZH
+    text: "59元套餐流量用不完可以结转吗"
+    category: COVERED
+    tags: [near_duplicate, product_confusion]
+    expect:
+      - file: zh/faq/套餐常见问题.docx
+        section: "套餐常见问题 > 59元套餐流量能结转吗？"
+        fact: "月底清零"
+
+  - id: q-zh-009
+    language: ZH
+    text: "99元套餐有没有免费的漫游"
+    category: COVERED
+    tags: [near_duplicate]
+    expect:
+      - file: zh/faq/套餐常见问题.docx
+        section: "套餐常见问题 > 99元套餐含免费漫游吗？"
+        fact: "亚洲3日漫游包"
+
+  - id: q-zh-010
+    language: ZH
+    text: "九十九的套餐是不是每个月送两张副卡"
+    category: COVERED
+    tags: [spoken_numbers, indirect]
+    expect:
+      - file: zh/policies/extra-sim-and-family-sharing.docx
+        section: "副卡与家庭共享 > 哪些套餐含副卡？"
+        fact: "99元套餐赠送两张副卡"
+
+  - id: q-zh-011
+    language: ZH
+    text: "59元Plus套餐提前解约要交多少钱"
+    category: COVERED
+    tags: [near_duplicate, policy_change, needs_fact_table]
+    expect:
+      - file: zh/policies/合约与提前解约政策_2026版.docx
+        section: "合约与提前解约政策（第三版） > 提前解约费"
+        fact: "59元Plus套餐 | 200"
+      - file: zh/faq/套餐常见问题.docx
+        section: "套餐常见问题 > 59元Plus套餐提前取消要多少钱？"
+        fact: "200元"
+    avoid:
+      - file: zh/policies/合约与提前解约政策_2024版.docx
+        section: "合约与提前解约政策（第二版） > 提前解约费"
+    factLookup: {table: plans, key: {plan: "Plan 59 Plus"}}
+
+  - id: q-zh-012
+    language: ZH
+    text: "办完业务之后几天之内可以反悔"
+    category: COVERED
+    tags: [policy_change, indirect, colloquial, stale_source]
+    expect:
+      - file: zh/policies/合约与提前解约政策_2026版.docx
+        section: "合约与提前解约政策（第三版） > 冷静期"
+        fact: "冷静期为15天"
+    avoid:
+      - file: zh/policies/合约与提前解约政策_2024版.docx
+        section: "合约与提前解约政策（第二版） > 冷静期"
+      - file: zh/faq/客服快速问答.xlsx
+        section: "快速问答!A14"
+    note: "问答表里的旧答案仍是7天，现行答案是2026年7月1日起的15天。"
+
+  - id: q-zh-013
+    language: ZH
+    text: "逾期缴费滞纳金是多少"
+    category: COVERED
+    tags: [policy_change]
+    liveExample: true
+    expect:
+      - file: zh/policies/逾期缴费与停机政策_2026版.docx
+        section: "逾期缴费与停机政策（第二版） > 滞纳金"
+        fact: "逾期金额的百分之一"
+      - file: zh/faq/客服快速问答.xlsx
+        section: "快速问答!A13"
+        fact: "百分之一"
+    avoid:
+      - file: zh/policies/逾期缴费与停机政策_2025版.docx
+        section: "逾期缴费与停机政策（第一版） > 滞纳金"
+
+  - id: q-zh-014
+    language: ZH
+    text: "话费晚交几天不收违约金"
+    category: COVERED
+    tags: [policy_change, colloquial]
+    expect:
+      - file: zh/policies/逾期缴费与停机政策_2026版.docx
+        section: "逾期缴费与停机政策（第二版） > 宽限期"
+        fact: "有10天宽限期"
+    avoid:
+      - file: zh/policies/逾期缴费与停机政策_2025版.docx
+        section: "逾期缴费与停机政策（第一版） > 宽限期"
+
+  - id: q-zh-015
+    language: ZH
+    text: "欠费多少天会被停机"
+    category: COVERED
+    tags: [policy_change]
+    expect:
+      - file: zh/policies/逾期缴费与停机政策_2026版.docx
+        section: "逾期缴费与停机政策（第二版） > 什么时候停机？"
+        fact: "第20天"
+    avoid:
+      - file: zh/policies/逾期缴费与停机政策_2025版.docx
+        section: "逾期缴费与停机政策（第一版） > 什么时候停机？"
+
+  - id: q-zh-016
+    language: ZH
+    text: "宽带搬家移机能免费几次"
+    category: COVERED
+    tags: [policy_change]
+    expect:
+      - file: zh/policies/合约与提前解约政策_2026版.docx
+        section: "合约与提前解约政策（第三版） > 搬家移机"
+        fact: "免费移机两次"
+    avoid:
+      - file: zh/policies/合约与提前解约政策_2024版.docx
+        section: "合约与提前解约政策（第二版） > 搬家移机"
+
+  - id: q-zh-017
+    language: ZH
+    text: "这个月话费怎么比平时高"
+    category: COVERED
+    tags: [colloquial, indirect]
+    liveExample: true
+    expect:
+      - file: zh/billing/how-to-read-your-bill.docx
+        section: "账单怎么看 > 这个月账单为什么比平时高？"
+        fact: "购买了加油包或漫游包"
+    note: "判断题：文档只列出常见原因，无法说明这位客户具体为什么高，回答应引导客户看应用里的账单。"
+
+  - id: q-zh-018
+    language: ZH
+    text: "账单能不能改成每个月十号出"
+    category: COVERED
+    tags: [spoken_numbers, indirect]
+    expect:
+      - file: zh/billing/change-billing-date.docx
+        section: "修改账单日 > 可以修改账单日吗？"
+        fact: "1日、10日或20日"
+
+  - id: q-zh-019
+    language: ZH
+    text: "我要拿去公司报销，发票怎么开"
+    category: COVERED
+    tags: [indirect, qa_workbook]
+    expect:
+      - file: zh/billing/e-invoice.docx
+        section: "电子发票 > 怎么开发票？"
+        fact: "3个工作日内"
+      - file: zh/faq/客服快速问答.xlsx
+        section: "快速问答!A11"
+        fact: "3个工作日内"
+
+  - id: q-zh-020
+    language: ZH
+    text: "R5 Pro 怎么恢复出厂设置，要按多久"
+    category: COVERED
+    tags: [near_duplicate, product_confusion, mixed_language]
+    expect:
+      - file: zh/devices/R5 Pro使用指南.docx
+        section: "星联R5 Pro使用指南 > R5 Pro怎么恢复出厂设置？"
+        fact: "10秒"
+      - file: zh/faq/客服快速问答.xlsx
+        section: "快速问答!A25"
+        fact: "10秒"
+
+  - id: q-zh-021
+    language: ZH
+    text: "R五的复位键要按几秒"
+    category: COVERED
+    tags: [near_duplicate, product_confusion, spoken_numbers]
+    expect:
+      - file: zh/devices/R5使用指南.docx
+        section: "星联R5使用指南 > R5怎么恢复出厂设置？"
+        fact: "8秒"
+      - file: zh/faq/客服快速问答.xlsx
+        section: "快速问答!A24"
+        fact: "8秒"
+
+  - id: q-zh-022
+    language: ZH
+    text: "M1扩展器能配R3用吗"
+    category: COVERED
+    tags: [product_confusion]
+    expect:
+      - file: zh/devices/M1使用指南.docx
+        section: "星联M1使用指南 > 哪些套餐配M1？"
+        fact: "不能用于R3"
+
+  - id: q-zh-023
+    language: ZH
+    text: "路由器上那个Internet灯一直是红的，上不了网"
+    category: COVERED
+    tags: [colloquial, mixed_language, qa_workbook]
+    expect:
+      - file: zh/support/broadband/internet-light-is-red.docx
+        section: "路由器Internet灯是红色的 > Internet灯红色代表什么？"
+        fact: "连不上互联网"
+      - file: zh/faq/客服快速问答.xlsx
+        section: "快速问答!A29"
+        fact: "连不上互联网"
+
+  - id: q-zh-024
+    language: ZH
+    text: "白鹭洲能不能装光纤1000"
+    category: COVERED
+    tags: [district]
+    expect:
+      - file: zh/network/服务区域/白鹭洲服务区域.docx
+        section: "白鹭洲覆盖与安装 > 白鹭洲的覆盖情况"
+        fact: "暂时不能办理光纤1000"
+      - file: zh/network/覆盖区域一览.xlsx
+        section: "覆盖区域!A2:E31"
+        fact: "白鹭洲 | 可办 | 暂不可办"
+
+  - id: q-zh-025
+    language: ZH
+    text: "星澜湾装宽带要几个工作日"
+    category: COVERED
+    tags: [district]
+    expect:
+      - file: zh/network/服务区域/星澜湾服务区域.docx
+        section: "星澜湾服务区域 > 星澜湾宽带安装要多久？"
+        fact: "一般2个工作日内安装完成"
+
+  - id: q-zh-026
+    language: ZH
+    text: "锦帆港什么时候能办光纤"
+    category: COVERED
+    tags: [district, indirect]
+    expect:
+      - file: zh/network/服务区域/锦帆港服务区域.docx
+        section: "服务区域记录 锦帆港 > 锦帆港说明"
+        fact: "预计2027年3月开通"
+
+  - id: q-zh-027
+    language: ZH
+    text: "碧荷坊的营业厅周一开门吗"
+    category: COVERED
+    tags: [district, colloquial]
+    expect:
+      - file: zh/stores/营业厅/碧荷坊营业厅.docx
+        section: "碧荷坊营业厅 > 碧荷坊营业厅的营业时间是什么？"
+        fact: "周一休息"
+
+  - id: q-zh-028
+    language: ZH
+    text: "星澜湾11月8号施工要多久"
+    category: COVERED
+    tags: [district, spoken_numbers]
+    expect:
+      - file: zh/network/公告/公告001_星澜湾施工.docx
+        section: "公告：星澜湾将于2026年11月8日施工 > 施工要多久？"
+        fact: "最长4小时"
+
+  - id: q-zh-029
+    language: ZH
+    text: "客服通话录音会保留多久"
+    category: COVERED
+    tags: [deep_in_long_doc, indirect]
+    expect:
+      - file: zh/handbooks/客户服务手册_2026.docx
+        section: "客户服务手册 > 通话录音与隐私"
+        fact: "保存90天"
+
+  - id: q-zh-030
+    language: ZH
+    text: "路由器用了一年坏了还保修吗"
+    category: COVERED
+    tags: [deep_in_long_doc, indirect, qa_workbook]
+    expect:
+      - file: zh/handbooks/客户服务手册_2026.docx
+        section: "客户服务手册 > 设备保修"
+        fact: "24个月保修"
+      - file: zh/faq/客服快速问答.xlsx
+        section: "快速问答!A22"
+        fact: "保修24个月"
+
+  - id: q-zh-031
+    language: ZH
+    text: "手机丢了多久能把号码停掉"
+    category: COVERED
+    tags: [deep_in_long_doc, indirect]
+    expect:
+      - file: zh/handbooks/客户服务手册_2026.docx
+        section: "客户服务手册 > 手机丢失或被盗"
+        fact: "10分钟内"
+
+  - id: q-zh-032
+    language: ZH
+    text: "在家里能不能把摄像头映射到外网"
+    category: COVERED
+    tags: [deep_in_long_doc, indirect, colloquial]
+    expect:
+      - file: zh/handbooks/家庭网络手册.docx
+        section: "家庭网络手册 > 端口转发"
+        fact: "不支持从外部访问家里的设备"
+
+  - id: q-zh-033
+    language: ZH
+    text: "星连宽带的客服几点下班"
+    category: COVERED
+    tags: [asr_error, short_doc, colloquial]
+    liveExample: true
+    expect:
+      - file: zh/short/客服服务时间.docx
+        section: "客服的服务时间是什么？"
+        fact: "8:00至22:00"
+    note: "语音识别把“星联”写成“星连”，“星联宽带”不是产品别名，不影响防护规则。"
+
+  - id: q-zh-034
+    language: ZH
+    text: "你们卖手机吗"
+    category: COVERED
+    tags: [short_doc, colloquial]
+    expect:
+      - file: zh/short/是否销售手机.docx
+        section: "星联宽带卖手机吗？"
+        fact: "不销售手机"
+
+  - id: q-zh-035
+    language: ZH
+    text: "手机热点最多几台设备能连"
+    category: COVERED
+    tags: [short_doc]
+    expect:
+      - file: zh/short/热点连接数.docx
+        section: "手机热点最多能连几台设备？"
+        fact: "8台设备"
+
+  - id: q-zh-036
+    language: ZH
+    text: "家里的宽带有固定IP吗"
+    category: COVERED
+    tags: [short_doc, mixed_language]
+    expect:
+      - file: zh/short/固定IP.docx
+        section: "家庭套餐含固定IP地址吗？"
+        fact: "只包含在企业宽带里"
+
+  - id: q-zh-037
+    language: ZH
+    text: "亚洲三天的漫游包多少钱"
+    category: COVERED
+    tags: [needs_fact_table, table_lookup, spoken_numbers]
+    expect:
+      - file: zh/roaming/roaming-packs-and-prices.docx
+        section: "漫游包 > 有哪些漫游包？"
+        fact: "亚洲3日 | 亚洲 | 3 | 68"
+    factLookup: {table: roaming_packs, key: {pack: "Asia 3 Day"}}
+    note: "roaming_packs事实表故意设为不可用，所以只能靠文档里的表格回答。"
+
+  - id: q-zh-038
+    language: ZH
+    text: "光纤500一个月多少钱"
+    category: COVERED
+    tags: [needs_fact_table]
+    expect:
+      - file: zh/plans/光纤500家庭宽带资费说明.docx
+        section: "光纤500家庭宽带资费说明 > 含速率与设备"
+        fact: "每月129元"
+      - file: zh/plans/broadband-plans-compared.docx
+        section: "家庭宽带套餐对比 > 家庭宽带有哪些套餐？"
+        fact: "月费（元） | 129 | 199"
+    factLookup: {table: plans, key: {plan: "Fiber 500"}}
+    note: "套餐事实表里光纤500有两行（昨天之前139元，今天起129元），文档里写的是现价。"
+
+  - id: q-zh-039
+    language: ZH
+    text: "敬老套餐谁能办"
+    category: COVERED
+    tags: [near_duplicate]
+    expect:
+      - file: zh/policies/senior-care-eligibility.docx
+        section: "敬老套餐办理条件 > 谁可以办理敬老套餐？"
+        fact: "年满65周岁"
+
+  - id: q-zh-040
+    language: ZH
+    text: "基础套餐能不能开eSIM"
+    category: COVERED
+    tags: [near_duplicate, product_confusion, mixed_language]
+    expect:
+      - file: zh/faq/套餐常见问题.docx
+        section: "套餐常见问题 > 基础套餐能用eSIM吗？"
+        fact: "实体SIM卡"
+
+  - id: q-zh-041
+    language: ZH
+    text: "我是新用户，办了有什么好处"
+    category: COVERED
+    tags: [near_duplicate, colloquial, indirect]
+    expect:
+      - file: zh/faq/新老客户权益问答.docx
+        section: "新老客户权益问答 > 新客户有什么入网优惠？"
+        fact: "首月赠送20GB流量"
+
+  - id: q-zh-042
+    language: ZH
+    text: "我用了好几年了，还能领新客户的优惠吗"
+    category: COVERED
+    tags: [near_duplicate, colloquial]
+    expect:
+      - file: zh/faq/新老客户权益问答.docx
+        section: "新老客户权益问答 > 老客户能享受入网优惠吗？"
+        fact: "仅限新客户"
+
+  - id: q-zh-043
+    language: ZH
+    text: "光纤500老用户升到光纤1000要多长时间"
+    category: COVERED
+    tags: [near_duplicate, product_confusion]
+    expect:
+      - file: zh/faq/新老客户权益问答.docx
+        section: "新老客户权益问答 > 老客户升级网速要多久？"
+        fact: "最长5个工作日"
+
+  - id: q-zh-044
+    language: ZH
+    text: "加油包30是多少钱，有多少流量"
+    category: COVERED
+    tags: [near_duplicate, qa_workbook]
+    expect:
+      - file: zh/addons/booster-data-packs.docx
+        section: "加油包流量 > 什么是加油包？"
+        fact: "加油包30为30GB，35元"
+
+  - id: q-zh-045
+    language: ZH
+    text: "能去营业厅交现金吗"
+    category: COVERED
+    tags: [near_duplicate]
+    expect:
+      - file: zh/billing/payment-methods.docx
+        section: "缴费方式 > 可以交现金吗？"
+        fact: "到营业厅交现金"
+
+  - id: q-zh-046
+    language: ZH
+    text: "宽带断了两天有没有补偿"
+    category: COVERED
+    tags: [indirect, colloquial]
+    expect:
+      - file: zh/policies/service-outage-compensation.docx
+        section: "服务中断补偿 > 服务中断可以得到什么补偿？"
+        fact: "每满一天按一天月费返还"
+
+  - id: q-zh-047
+    language: ZH
+    text: "出国前买的漫游包没用上能退吗"
+    category: COVERED
+    tags: [indirect]
+    expect:
+      - file: zh/roaming/roaming-pack-refunds.docx
+        section: "漫游包有效期与退款 > 漫游包可以退款吗？"
+        fact: "尚未生效的漫游包可以在应用里全额退款"
+
+  - id: q-zh-048
+    language: ZH
+    text: "出远门想把号码先停一段时间，合约还算不算"
+    category: COVERED
+    tags: [indirect, colloquial]
+    expect:
+      - file: zh/sim/pause-your-line.docx
+        section: "号码暂停 > 暂停会延长合约吗？"
+        fact: "暂停期间合约照常计算"
+
+  # ------------------------------------------------------------------ PARTLY_COVERED
+  - id: q-en-101
+    language: EN
+    text: "How much bonus data do I get if I top up 100 yuan?"
+    category: PARTLY_COVERED
+    tags: [needs_fact_table, table_lookup]
+    expect:
+      - file: en/billing/balance-alerts-and-top-up.docx
+        section: "Balance alerts and top-up > Do I get a bonus when I top up?"
+        fact: "Larger top-ups come with a bonus"
+    factLookup: {table: topups, key: {amount: "100"}}
+    note: "The FAQ says that a bonus exists and that it depends on the amount. The figures are only in the topups fact table."
+
+  - id: q-en-102
+    language: EN
+    text: "What does the Europe 7 day roaming pack cost?"
+    category: PARTLY_COVERED
+    tags: [needs_fact_table, table_lookup]
+    liveExample: true
+    expect:
+      - file: en/roaming/roaming-packs-and-prices.docx
+        section: "Roaming packs > How much is the Europe pack?"
+        fact: "shown in the NovaNet app before you buy"
+    factLookup: {table: roaming_packs, key: {pack: "Europe 7 Day"}}
+    note: "The pack exists, but no document states its price, and the fact table is UNAVAILABLE. The answer should say the price is shown in the app."
+
+  - id: q-en-103
+    language: EN
+    text: "I'm moving to Egret Isle, can I keep Fiber 500 there and does it cost anything?"
+    category: PARTLY_COVERED
+    tags: [district, multi_step]
+    expect:
+      - file: en/policies/contract-and-early-termination-policy-v3.docx
+        section: "Contract Policy, version 3 > Moving house"
+        fact: "two free relocations"
+      - file: en/network/service-areas/area-09.docx
+        section: "Egret Isle coverage > Coverage in Egret Isle"
+        fact: "Fiber 500 is available throughout Egret Isle"
+    note: "Two sections together answer it. Neither says whether this caller still has a free relocation left."
+
+  - id: q-en-104
+    language: EN
+    text: "What do I pay if I lose my R5 router?"
+    category: PARTLY_COVERED
+    tags: [product_confusion]
+    expect:
+      - file: en/short/lost-router.docx
+        section: "What if I lose my router?"
+        fact: "300 yuan for the R3 and 600 yuan for the R5 Pro"
+    note: "Only the R3 and the R5 Pro have a price. The R5 does not, so the answer must not invent one."
+
+  - id: q-zh-101
+    language: ZH
+    text: "充值100块送多少流量"
+    category: PARTLY_COVERED
+    tags: [needs_fact_table, table_lookup, colloquial]
+    expect:
+      - file: zh/billing/balance-alerts-and-top-up.docx
+        section: "余额提醒与充值 > 充值有赠送吗？"
+        fact: "金额较大的充值有赠送"
+    factLookup: {table: topups, key: {amount: "100"}}
+    note: "文档只说有赠送、因面额而异，具体数字只在topups事实表里。"
+
+  - id: q-zh-102
+    language: ZH
+    text: "欧洲七天的漫游包多少钱"
+    category: PARTLY_COVERED
+    tags: [needs_fact_table, table_lookup, spoken_numbers]
+    liveExample: true
+    expect:
+      - file: zh/roaming/roaming-packs-and-prices.docx
+        section: "漫游包 > 欧洲漫游包多少钱？"
+        fact: "价格在应用里购买前会显示"
+    factLookup: {table: roaming_packs, key: {pack: "Europe 7 Day"}}
+    note: "欧洲7日漫游包存在，但没有文档写价格，事实表不可用。回答应说明价格在应用里显示。"
+
+  - id: q-zh-103
+    language: ZH
+    text: "我要搬到白鹭洲，光纤500还能接着用吗，要不要钱"
+    category: PARTLY_COVERED
+    tags: [district, multi_step, colloquial]
+    expect:
+      - file: zh/policies/合约与提前解约政策_2026版.docx
+        section: "合约与提前解约政策（第三版） > 搬家移机"
+        fact: "免费移机两次"
+      - file: zh/network/服务区域/白鹭洲服务区域.docx
+        section: "白鹭洲覆盖与安装 > 白鹭洲的覆盖情况"
+        fact: "白鹭洲全区可以办理光纤500"
+    note: "两个章节合起来才能回答，且都没说这位客户还剩几次免费移机。"
+
+  - id: q-zh-104
+    language: ZH
+    text: "R5路由器丢了要赔多少钱"
+    category: PARTLY_COVERED
+    tags: [product_confusion]
+    expect:
+      - file: zh/short/路由器丢失.docx
+        section: "路由器丢了怎么办？"
+        fact: "R3为300元，R5 Pro为600元"
+    note: "只有R3和R5 Pro有价格，R5没有，回答不能编一个。"
+
+  # ------------------------------------------------------------------ OUTDATED_ONLY
+  - id: q-en-201
+    language: EN
+    text: "If I renew my contract early, is there a loyalty gift?"
+    category: OUTDATED_ONLY
+    tags: [policy_change, stale_source]
+    liveExample: true
+    expect:
+      - file: en/policies/contract-and-early-termination-policy-v2.docx
+        section: "Contract Policy, version 2 > Renewal gift"
+        fact: "10 GB of extra data a month for 6 months"
+    note: "Only version 2 (1 July 2024 to 30 June 2026) has the renewal gift. Version 3 does not mention it. The answer must say that the gift applied until 30 June 2026."
+
+  - id: q-en-202
+    language: EN
+    text: "Can I still get a paper bill by post, and what does it cost?"
+    category: OUTDATED_ONLY
+    tags: [policy_change, stale_source]
+    liveExample: true
+    expect:
+      - file: en/policies/late-payment-and-suspension-policy-v1.docx
+        section: "Late Payment Policy, version 1 > Paper bills"
+        fact: "A paper bill costs 5 yuan per month"
+    note: "Version 2 of the policy, from 1 September 2026, does not mention paper bills."
+
+  - id: q-en-203
+    language: EN
+    text: "Is there a cheap deal on the Asia 7 day roaming pack this summer?"
+    category: OUTDATED_ONLY
+    tags: [stale_source, near_duplicate]
+    liveExample: true
+    expect:
+      - file: en/promotions/summer-travel-roaming-deal.docx
+        section: "Summer travel roaming deal > Offer"
+        fact: "88 yuan"
+    note: "The deal ended on 31 August 2026."
+
+  - id: q-en-204
+    language: EN
+    text: "Do I still get the Mid-Autumn shared family data?"
+    category: OUTDATED_ONLY
+    tags: [stale_source, colloquial]
+    expect:
+      - file: en/promotions/mid-autumn-family-gift-2025.docx
+        section: "Mid-Autumn family gift 2025 > What is the offer?"
+        fact: "5 GB of shared family data"
+    note: "The 2025 gift ended on 15 October 2025."
+
+  - id: q-zh-201
+    language: ZH
+    text: "提前续约有没有忠诚赠礼"
+    category: OUTDATED_ONLY
+    tags: [policy_change, stale_source]
+    liveExample: true
+    expect:
+      - file: zh/policies/合约与提前解约政策_2024版.docx
+        section: "合约与提前解约政策（第二版） > 续约赠礼"
+        fact: "每月多送10GB流量"
+    note: "只有第二版（2024年7月1日至2026年6月30日）有续约赠礼，第三版没有提到。回答应说明该赠礼只适用到2026年6月30日。"
+
+  - id: q-zh-202
+    language: ZH
+    text: "现在还能申请邮寄纸质账单吗，一个月多少钱"
+    category: OUTDATED_ONLY
+    tags: [policy_change, stale_source]
+    liveExample: true
+    expect:
+      - file: zh/policies/逾期缴费与停机政策_2025版.docx
+        section: "逾期缴费与停机政策（第一版） > 纸质账单"
+        fact: "每月收费5元"
+    note: "第二版（2026年9月1日起）没有提到纸质账单。"
+
+  - id: q-zh-203
+    language: ZH
+    text: "今年暑假亚洲七天漫游包有没有特价"
+    category: OUTDATED_ONLY
+    tags: [stale_source]
+    liveExample: true
+    expect:
+      - file: zh/promotions/暑期出行漫游特惠.docx
+        section: "暑期出行漫游特惠 > 优惠内容"
+        fact: "特价88元"
+    note: "活动已于2026年8月31日结束。"
+
+  - id: q-zh-204
+    language: ZH
+    text: "中秋节的家庭共享流量还有吗"
+    category: OUTDATED_ONLY
+    tags: [stale_source, colloquial]
+    expect:
+      - file: zh/promotions/中秋家庭礼包_2025.docx
+        section: "2025中秋家庭礼包 > 活动内容是什么？"
+        fact: "5GB家庭共享流量"
+    note: "2025年的礼包已于2025年10月15日结束。"
+
+  # ------------------------------------------------------------------ NOT_COVERED
+  - id: q-en-301
+    language: EN
+    text: "Can I pay my bill with cryptocurrency?"
+    category: NOT_COVERED
+    tags: [near_duplicate]
+    liveExample: true
+    expect: []
+    note: "The payment methods document is close in wording but does not list cryptocurrency. A hit on it would be a false positive."
+
+  - id: q-en-302
+    language: EN
+    text: "Do you have a satellite internet plan for remote areas?"
+    category: NOT_COVERED
+    tags: [indirect]
+    expect: []
+
+  - id: q-en-303
+    language: EN
+    text: "Is there a plan with truly unlimited mobile data?"
+    category: NOT_COVERED
+    tags: [colloquial]
+    expect: []
+    note: "Judgment call: the fair use policy says home broadband has no cap, which is a different product."
+
+  - id: q-en-304
+    language: EN
+    text: "Can I use my NovaNet SIM in a smartwatch?"
+    category: NOT_COVERED
+    tags: [indirect]
+    expect: []
+
+  - id: q-en-305
+    language: EN
+    text: "Does Plan 59 come with a free video streaming subscription?"
+    category: NOT_COVERED
+    tags: [product_confusion]
+    expect: []
+
+  - id: q-en-306
+    language: EN
+    text: "Is there a NovaNet shop in Tokyo?"
+    category: NOT_COVERED
+    tags: [district]
+    expect: []
+
+  - id: q-en-307
+    language: EN
+    text: "How much is Plan 69?"
+    category: NOT_COVERED
+    tags: [unknown_model, product_confusion]
+    liveExample: true
+    expect: []
+    note: "Plan 69 is not in the catalog. Plan family is known, so the guard must answer NO_MATCH instead of returning Plan 59 or Plan 99."
+
+  - id: q-en-308
+    language: EN
+    text: "How do I set up my R7 router?"
+    category: NOT_COVERED
+    tags: [unknown_model, product_confusion]
+    expect: []
+
+  - id: q-en-309
+    language: EN
+    text: "What does the T3 TV box look like?"
+    category: NOT_COVERED
+    tags: [unknown_model]
+    expect: []
+
+  - id: q-en-310
+    language: EN
+    text: "How many devices can the M2 mesh extender cover?"
+    category: NOT_COVERED
+    tags: [unknown_model, product_confusion]
+    expect: []
+
+  - id: q-en-311
+    language: EN
+    text: "What is the monthly price of Fiber 800?"
+    category: NOT_COVERED
+    tags: [unknown_model, product_confusion]
+    expect: []
+    note: "Three-digit models cannot be recognized by the guard, so this one depends on the similarity threshold only."
+
+  - id: q-zh-301
+    language: ZH
+    text: "能用比特币交话费吗"
+    category: NOT_COVERED
+    tags: [near_duplicate, colloquial]
+    liveExample: true
+    expect: []
+    note: "缴费方式文档的措辞很接近但没有比特币，命中它就是误报。"
+
+  - id: q-zh-302
+    language: ZH
+    text: "你们有没有卫星宽带套餐"
+    category: NOT_COVERED
+    tags: [indirect]
+    expect: []
+
+  - id: q-zh-303
+    language: ZH
+    text: "有没有不限量的流量套餐"
+    category: NOT_COVERED
+    tags: [colloquial]
+    expect: []
+
+  - id: q-zh-304
+    language: ZH
+    text: "我的卡能放在智能手表里用吗"
+    category: NOT_COVERED
+    tags: [indirect]
+    expect: []
+
+  - id: q-zh-305
+    language: ZH
+    text: "59元套餐送不送视频会员"
+    category: NOT_COVERED
+    tags: [product_confusion]
+    expect: []
+
+  - id: q-zh-306
+    language: ZH
+    text: "东京有没有星联宽带的门店"
+    category: NOT_COVERED
+    tags: [district]
+    expect: []
+
+  - id: q-zh-307
+    language: ZH
+    text: "Plan 69 套餐一个月多少钱"
+    category: NOT_COVERED
+    tags: [unknown_model, product_confusion, mixed_language]
+    liveExample: true
+    expect: []
+    note: "Plan 69不在产品目录里，防护规则应返回NO_MATCH。"
+
+  - id: q-zh-308
+    language: ZH
+    text: "R7路由器怎么设置"
+    category: NOT_COVERED
+    tags: [unknown_model, product_confusion]
+    expect: []
+
+  - id: q-zh-309
+    language: ZH
+    text: "G3光猫的指示灯是什么意思"
+    category: NOT_COVERED
+    tags: [unknown_model, product_confusion]
+    expect: []
+
+  - id: q-zh-310
+    language: ZH
+    text: "69元套餐有多少流量"
+    category: NOT_COVERED
+    tags: [unknown_model, product_confusion]
+    expect: []
+    note: "纯中文的型号防护规则识别不了（没有拉丁字母），只能靠相似度阈值。"
+
+  # ------------------------------------------------------------------ ACCOUNT_SPECIFIC
+  - id: q-en-401
+    language: EN
+    text: "Did my payment go through?"
+    category: ACCOUNT_SPECIFIC
+    tags: [colloquial]
+    liveExample: true
+    expect: []
+    note: "The payment problems document only gives general advice. It cannot tell whether this payment arrived."
+
+  - id: q-en-402
+    language: EN
+    text: "When is my technician coming tomorrow?"
+    category: ACCOUNT_SPECIFIC
+    tags: [colloquial]
+    liveExample: true
+    expect: []
+
+  - id: q-en-403
+    language: EN
+    text: "How much data do I have left this month?"
+    category: ACCOUNT_SPECIFIC
+    tags: [colloquial]
+    expect: []
+    note: "The documents say where to look in the app, but the number is the caller's own."
+
+  - id: q-en-404
+    language: EN
+    text: "What is the balance on my last bill?"
+    category: ACCOUNT_SPECIFIC
+    tags: [indirect]
+    expect: []
+
+  - id: q-en-405
+    language: EN
+    text: "When does my contract end?"
+    category: ACCOUNT_SPECIFIC
+    tags: [colloquial]
+    expect: []
+
+  - id: q-en-406
+    language: EN
+    text: "Has my number porting request been approved yet?"
+    category: ACCOUNT_SPECIFIC
+    tags: [indirect]
+    expect: []
+
+  - id: q-zh-401
+    language: ZH
+    text: "我的缴费成功了吗"
+    category: ACCOUNT_SPECIFIC
+    tags: [colloquial]
+    liveExample: true
+    expect: []
+
+  - id: q-zh-402
+    language: ZH
+    text: "师傅明天几点上门"
+    category: ACCOUNT_SPECIFIC
+    tags: [colloquial]
+    liveExample: true
+    expect: []
+
+  - id: q-zh-403
+    language: ZH
+    text: "我这个月还剩多少流量"
+    category: ACCOUNT_SPECIFIC
+    tags: [colloquial]
+    expect: []
+
+  - id: q-zh-404
+    language: ZH
+    text: "我上个月的账单一共多少钱"
+    category: ACCOUNT_SPECIFIC
+    tags: [indirect]
+    expect: []
+
+  - id: q-zh-405
+    language: ZH
+    text: "我的合约什么时候到期"
+    category: ACCOUNT_SPECIFIC
+    tags: [colloquial]
+    expect: []
+
+  - id: q-zh-406
+    language: ZH
+    text: "我的携号转网申请批下来了吗"
+    category: ACCOUNT_SPECIFIC
+    tags: [indirect]
+    expect: []
