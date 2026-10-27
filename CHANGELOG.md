@@ -4,6 +4,12 @@ All notable changes to aicc-knowledge are recorded here, newest first.
 
 ## Unreleased
 
+### Added (NovaNet demo corpus)
+
+- `demo/novanet`: a synthetic test corpus for a fictional carrier (NovaNet Broadband / 星联宽带), in Chinese and English, for testing retrieval on a document set that behaves like a real one. `go run ./demo/novanet/gen -out <dir> -today <yyyy-mm-dd>` deterministically writes the `.docx` and `.xlsx` sources, the `.qa.yaml` and `.facts.yaml` mappings and `products.yaml`. The tricky cases include near-duplicate questions, a policy in two contradicting versions, long and one-answer documents, product names that differ by one word, a Q&A workbook with alternate phrasings, and three fact tables: `plans` (an old price ending the day before `-today`), `topups` (decimal keys written as text) and `roaming_packs` (an empty key, so the table is unavailable). Only the fact tables depend on `-today`.
+- `demo/novanet/questions.yaml`: questions in five categories (covered, partly covered, not covered, covered only by an outdated source, account-specific), with the source section and fact that each expects. The tests check that every expected section exists in the parsed corpus and contains its fact.
+- `demo/novanet/resolve` turns the question set into the CSV `eval` reads by matching each expectation to the candidate ids of the LIVE publications (read-only SQL). An expectation that matches nothing is reported as a gap (`NO_CANDIDATE`, `ONLY_REJECTED`, `FACT_NOT_STATED`) and left out, never relabeled. The README shows how to run the corpus end to end.
+
 ### Fixed (generate: a looping answer lost its section for good)
 
 - The candidates and condense JSON schemas bound every string with `maxLength` (the validation limit plus 25%, per section language), so a grammar-constrained server ends a looping answer early. A request refused with HTTP 400 is sent once more without the bounds; only if that one is accepted does the client switch them off for the run (one `LLM_STRING_BOUNDS_UNSUPPORTED` warning, `string_bounds=off` in the `generate` summary). A 400 for both forms changes nothing. `max_tokens` is derived per request from the same bounds and clamped to the client ceiling. Prompt version `faq-v3`. Research: `docs/research/05-llm-string-bounds.md`.
