@@ -67,8 +67,8 @@ func TestMigrateUpDownUp(t *testing.T) {
 		t.Fatalf("tables after up = %v, want %v", got, want)
 	}
 	applied, latest, err := s.MigrationVersions(ctx)
-	if err != nil || applied != latest || latest != 16 {
-		t.Fatalf("versions applied=%d latest=%d err=%v, want 16/16", applied, latest, err)
+	if err != nil || applied != latest || latest != 17 {
+		t.Fatalf("versions applied=%d latest=%d err=%v, want 17/17", applied, latest, err)
 	}
 
 	if err := s.MigrateDown(ctx); err != nil {
@@ -167,7 +167,7 @@ func TestGoEnumsEqualDatabaseCheckConstraints(t *testing.T) {
 
 	fv, cs, ps, js, ls := domain.FileVersionStates(), domain.CandidateStates(), domain.PublicationStates(), domain.JobStates(), domain.Languages()
 	sk, ft := domain.SectionKinds(), domain.FactTableStatuses()
-	cf, ra := domain.CandidateFlags(), domain.ReviewActions()
+	cf, ra, gos := domain.CandidateFlags(), domain.ReviewActions(), domain.GenerateOutcomes()
 	cases := []struct {
 		table, column string
 		want          []string
@@ -182,6 +182,7 @@ func TestGoEnumsEqualDatabaseCheckConstraints(t *testing.T) {
 		{"parsed_sections", "qa_language", goValues(strs(len(ls), func(i int) string { return string(ls[i]) })...)},
 		{"candidates", "flags", goValues(strs(len(cf), func(i int) string { return string(cf[i]) })...)},
 		{"candidate_reviews", "action", goValues(strs(len(ra), func(i int) string { return string(ra[i]) })...)},
+		{"parsed_sections", "generate_outcome", goValues(strs(len(gos), func(i int) string { return string(gos[i]) })...)},
 		{"fact_tables", "status", goValues(strs(len(ft), func(i int) string { return string(ft[i]) })...)},
 	}
 	for _, tc := range cases {

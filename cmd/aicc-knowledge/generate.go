@@ -24,7 +24,10 @@ import (
 // (or, with -watch, keeps polling every -interval until interrupted) and
 // prints a summary per pass on stdout. -version queues one file version
 // first and processes only that version's job; every other queued job is left
-// alone (an already generated version is skipped). It exits 0 when no job hit
+// alone (an already generated version is skipped). -retry-failed instead
+// re-runs exactly the sections recorded FAILED in current versions (only the
+// one of -version, when given) once, then exits; it cannot be combined with
+// -watch. It exits 0 when no job hit
 // an infrastructure error, 1 otherwise.
 func runGenerate(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("generate", flag.ContinueOnError)
@@ -32,7 +35,12 @@ func runGenerate(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	watch := fs.Bool("watch", false, "keep polling for generate jobs every -interval until interrupted")
 	interval := fs.Duration("interval", 10*time.Second, "time between polls with -watch")
 	versionID := fs.String("version", "", "queue the GENERATE job of this file version id first")
+	retryFailed := fs.Bool("retry-failed", false, "re-run the sections generate recorded as FAILED (of -version, when given) and exit")
 	if err := fs.Parse(args); err != nil {
+		return exitUsage
+	}
+	if *retryFailed && *watch {
+		fmt.Fprintln(stderr, "generate: -retry-failed cannot be combined with -watch")
 		return exitUsage
 	}
 	if fs.NArg() > 0 || *interval <= 0 {
@@ -56,7 +64,7 @@ func runGenerate(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		fmt.Fprintf(stderr, "generate: %v\n", err)
 		return exitFailure
 	}
-	ok, err := runGenerateLoop(ctx, cfg, *watch, version, *interval, stdout)
+	ok, err := runGenerateLoop(ctx, cfg, *watch, *retryFailed, version, *interval, stdout)
 	if err != nil {
 		fmt.Fprintf(stderr, "generate: %v\n", err)
 		return exitFailure
@@ -102,7 +110,7 @@ func limitsOf(cfg config.Config) candidate.Limits {
 }
 
 // runGenerateLoop reports whether every job of the (last) pass was clean.
-func runGenerateLoop(ctx context.Context, cfg config.Config, watch bool, version uuid.UUID, interval time.Duration, stdout io.Writer) (bool, error) {
+func runGenerateLoop(ctx context.Context, cfg config.Config, watch, retryFailed bool, version uuid.UUID, interval time.Duration, stdout io.Writer) (bool, error) {
 	prov, shutdown, err := setupObs(ctx, cfg)
 	if err != nil {
 		return false, err
@@ -115,13 +123,21 @@ func runGenerateLoop(ctx context.Context, cfg config.Config, watch bool, version
 	defer st.Close()
 	client, err := llm.New(llm.Config{
 		BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey, Model: cfg.LLMModel, Timeout: cfg.LLMTimeout,
-		Temperature: cfg.LLMTemperature, Seed: cfg.LLMSeed,
+		Temperature: cfg.LLMTemperature, Seed: cfg.LLMSeed, Logger: slog.Default(),
 	})
 	if err != nil {
 		return false, err
 	}
 	w := &generate.Worker{Store: st, LLM: client, Limits: limitsOf(cfg), Metrics: prov.Metrics, Log: slog.Default(), Only: version}
 
+	if retryFailed {
+		sum, err := w.RetryFailedSections(ctx, version)
+		printGenerateSummary(stdout, sum, client)
+		if err != nil {
+			return false, err
+		}
+		return sum.Errors == 0, nil
+	}
 	if version != uuid.Nil {
 		queued, err := w.Enqueue(ctx, version)
 		if err != nil {
@@ -131,14 +147,7 @@ func runGenerateLoop(ctx context.Context, cfg config.Config, watch bool, version
 	}
 	for {
 		sum, err := w.Run(ctx)
-		perSection := time.Duration(0)
-		if sum.Sections > 0 {
-			perSection = sum.LLMTime / time.Duration(sum.Sections)
-		}
-		fmt.Fprintf(stdout, "claimed=%d generated=%d skipped=%d errors=%d sections=%d candidates=%d warnings=%d duplicates=%d skipped_stub=%d skipped_no_language=%d truncated=%d qa_verbatim=%d qa_condensed=%d qa_dropped=%d llm_seconds=%.1f seconds_per_section=%.1f prompt_version=%s model=%s\n",
-			sum.Claimed, sum.Generated, sum.Skipped, sum.Errors, sum.Sections, sum.Candidates, sum.Warnings, sum.Duplicates,
-			sum.SkippedStub, sum.SkippedNoLanguage, sum.Truncated, sum.QAVerbatim, sum.QACondensed, sum.QADropped,
-			sum.LLMTime.Seconds(), perSection.Seconds(), generate.PromptVersion, client.Model())
+		printGenerateSummary(stdout, sum, client)
 		clean := sum.Errors == 0
 		switch {
 		case err != nil && ctx.Err() != nil:
@@ -156,4 +165,20 @@ func runGenerateLoop(ctx context.Context, cfg config.Config, watch bool, version
 		case <-time.After(interval):
 		}
 	}
+}
+
+func printGenerateSummary(stdout io.Writer, sum generate.Summary, client *llm.Client) {
+	bounds := "on"
+	if client.StringBoundsOff() {
+		bounds = "off"
+	}
+	perSection := time.Duration(0)
+	if sum.Sections > 0 {
+		perSection = sum.LLMTime / time.Duration(sum.Sections)
+	}
+	fmt.Fprintf(stdout, "claimed=%d generated=%d skipped=%d errors=%d sections=%d sections_generated=%d sections_empty=%d sections_failed=%d token_cap_hits=%d candidates=%d warnings=%d duplicates=%d skipped_stub=%d skipped_no_language=%d truncated=%d qa_verbatim=%d qa_condensed=%d qa_dropped=%d llm_seconds=%.1f seconds_per_section=%.1f prompt_version=%s model=%s string_bounds=%s\n",
+		sum.Claimed, sum.Generated, sum.Skipped, sum.Errors, sum.Sections, sum.SectionsGenerated, sum.SectionsEmpty, sum.SectionsFailed, sum.CutOff,
+		sum.Candidates, sum.Warnings, sum.Duplicates,
+		sum.SkippedStub, sum.SkippedNoLanguage, sum.Truncated, sum.QAVerbatim, sum.QACondensed, sum.QADropped,
+		sum.LLMTime.Seconds(), perSection.Seconds(), generate.PromptVersion, client.Model(), bounds)
 }

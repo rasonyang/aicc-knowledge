@@ -80,9 +80,18 @@ func TestGenerateExportReviewImportCLI(t *testing.T) {
 		t.Fatalf("parse = %d %s", code, stderr)
 	}
 	code, out, stderr := invoke(t, "generate")
-	if code != exitOK || !strings.HasPrefix(out, "claimed=1 generated=1 skipped=0 errors=0 sections=3 candidates=6 warnings=0 duplicates=0 ") ||
-		!strings.Contains(out, "prompt_version=faq-v2 model=fake-model") {
+	if code != exitOK || !strings.HasPrefix(out, "claimed=1 generated=1 skipped=0 errors=0 sections=3 sections_generated=3 sections_empty=0 sections_failed=0 token_cap_hits=0 candidates=6 warnings=0 duplicates=0 ") ||
+		!strings.Contains(out, "prompt_version=faq-v3 model=fake-model") {
 		t.Fatalf("generate = %d %q %s", code, out, stderr)
+	}
+	// No section failed: --retry-failed has nothing to do (both flag spellings).
+	for _, flag := range []string{"--retry-failed", "-retry-failed"} {
+		if code, out, stderr := invoke(t, "generate", flag); code != exitOK || !strings.HasPrefix(out, "claimed=0 generated=0 ") {
+			t.Fatalf("generate %s = %d %q %s", flag, code, out, stderr)
+		}
+	}
+	if code, _, _ := invoke(t, "generate", "--retry-failed", "--watch"); code != exitUsage {
+		t.Fatalf("--retry-failed with --watch = %d, want %d", code, exitUsage)
 	}
 	// Nothing left to do; re-arming a done version skips it.
 	if code, out, _ := invoke(t, "generate"); code != exitOK || !strings.HasPrefix(out, "claimed=0 generated=0 ") {

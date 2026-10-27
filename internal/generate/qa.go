@@ -134,7 +134,7 @@ type condensed struct {
 // condense makes the one LLM call that shortens an answer. An error is an
 // infrastructure error; a model answer that is unusable is a problem.
 func (w *Worker) condense(ctx context.Context, lang domain.Language, question, answer string, sum *Summary) (condensed, error) {
-	content, err := w.complete(ctx, condenseMessages(lang, w.Limits, question, answer), condenseSchemaName, condenseSchema, func(b []byte) error {
+	content, err := w.complete(ctx, condenseMessages(lang, w.Limits, question, answer), condenseSchemaName, condenseSchemaFor(lang, w.Limits), condenseMaxTokens(lang, w.Limits), func(b []byte) error {
 		_, err := decodeCondensed(b)
 		return err
 	}, sum)

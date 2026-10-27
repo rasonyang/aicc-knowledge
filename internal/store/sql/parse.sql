@@ -38,6 +38,20 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
 -- name: ListParsedSections :many
 SELECT * FROM parsed_sections WHERE file_version_id = $1 ORDER BY ordinal;
 
+-- name: SetSectionGenerateOutcome :execrows
+-- Records what generate made of a section. Matches on (ordinal, source_ref) so
+-- a section re-derived while generating is not marked.
+UPDATE parsed_sections
+SET generate_outcome = sqlc.narg(outcome), generate_error_code = sqlc.narg(error_code)
+WHERE file_version_id = sqlc.arg(file_version_id) AND ordinal = sqlc.arg(ordinal) AND source_ref = sqlc.arg(source_ref);
+
+-- name: ListVersionsWithFailedSections :many
+-- Current PARSED versions that have a section generate recorded FAILED.
+SELECT v.id FROM file_versions v
+WHERE v.superseded_at IS NULL AND v.state = 'PARSED'
+  AND EXISTS (SELECT 1 FROM parsed_sections s WHERE s.file_version_id = v.id AND s.generate_outcome = 'FAILED')
+ORDER BY v.discovered_at, v.id;
+
 -- name: ListCurrentFailedFileVersions :many
 SELECT * FROM file_versions
 WHERE state = 'PARSE_FAILED' AND superseded_at IS NULL

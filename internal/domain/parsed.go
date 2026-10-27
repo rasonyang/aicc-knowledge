@@ -19,6 +19,27 @@ func SectionKinds() []SectionKind {
 	return []SectionKind{SectionKindDocxSection, SectionKindXlsxChunk, SectionKindXlsxQARow}
 }
 
+// GenerateOutcome says what `generate` made of a parsed section it sent to the
+// LLM. A section it did not send (stub, Q&A row) has none.
+//
+// GENERATED: at least one candidate was produced. EMPTY: the model answered
+// with an empty list; there is nothing to retry. FAILED: no usable output
+// (the output never conformed or the LLM did not answer); the section is
+// retried by `generate --retry-failed`.
+type GenerateOutcome string
+
+// Generate outcomes.
+const (
+	GenerateGenerated GenerateOutcome = "GENERATED"
+	GenerateEmpty     GenerateOutcome = "EMPTY"
+	GenerateFailed    GenerateOutcome = "FAILED"
+)
+
+// GenerateOutcomes returns the enum's value set.
+func GenerateOutcomes() []GenerateOutcome {
+	return []GenerateOutcome{GenerateGenerated, GenerateEmpty, GenerateFailed}
+}
+
 // FactTableStatus says whether a fact table can be served.
 //
 // AVAILABLE means the table's current import pointer names the current

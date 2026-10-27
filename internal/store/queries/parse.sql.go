@@ -203,7 +203,7 @@ func (q *Queries) ListCurrentFailedFileVersions(ctx context.Context) ([]FileVers
 }
 
 const listParsedSections = `-- name: ListParsedSections :many
-SELECT id, file_version_id, ordinal, kind, heading_path, level, body, source_ref, qa_question, qa_alternates, qa_language FROM parsed_sections WHERE file_version_id = $1 ORDER BY ordinal
+SELECT id, file_version_id, ordinal, kind, heading_path, level, body, source_ref, qa_question, qa_alternates, qa_language, generate_outcome, generate_error_code FROM parsed_sections WHERE file_version_id = $1 ORDER BY ordinal
 `
 
 func (q *Queries) ListParsedSections(ctx context.Context, fileVersionID uuid.UUID) ([]ParsedSection, error) {
@@ -227,10 +227,40 @@ func (q *Queries) ListParsedSections(ctx context.Context, fileVersionID uuid.UUI
 			&i.QaQuestion,
 			&i.QaAlternates,
 			&i.QaLanguage,
+			&i.GenerateOutcome,
+			&i.GenerateErrorCode,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVersionsWithFailedSections = `-- name: ListVersionsWithFailedSections :many
+SELECT v.id FROM file_versions v
+WHERE v.superseded_at IS NULL AND v.state = 'PARSED'
+  AND EXISTS (SELECT 1 FROM parsed_sections s WHERE s.file_version_id = v.id AND s.generate_outcome = 'FAILED')
+ORDER BY v.discovered_at, v.id
+`
+
+// Current PARSED versions that have a section generate recorded FAILED.
+func (q *Queries) ListVersionsWithFailedSections(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listVersionsWithFailedSections)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -275,6 +305,36 @@ type SetParseWarningsParams struct {
 func (q *Queries) SetParseWarnings(ctx context.Context, arg SetParseWarningsParams) error {
 	_, err := q.db.Exec(ctx, setParseWarnings, arg.ID, arg.ParseWarnings)
 	return err
+}
+
+const setSectionGenerateOutcome = `-- name: SetSectionGenerateOutcome :execrows
+UPDATE parsed_sections
+SET generate_outcome = $1, generate_error_code = $2
+WHERE file_version_id = $3 AND ordinal = $4 AND source_ref = $5
+`
+
+type SetSectionGenerateOutcomeParams struct {
+	Outcome       *string   `json:"outcome"`
+	ErrorCode     *string   `json:"errorCode"`
+	FileVersionID uuid.UUID `json:"fileVersionId"`
+	Ordinal       int32     `json:"ordinal"`
+	SourceRef     string    `json:"sourceRef"`
+}
+
+// Records what generate made of a section. Matches on (ordinal, source_ref) so
+// a section re-derived while generating is not marked.
+func (q *Queries) SetSectionGenerateOutcome(ctx context.Context, arg SetSectionGenerateOutcomeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setSectionGenerateOutcome,
+		arg.Outcome,
+		arg.ErrorCode,
+		arg.FileVersionID,
+		arg.Ordinal,
+		arg.SourceRef,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const transitionFileVersion = `-- name: TransitionFileVersion :execrows

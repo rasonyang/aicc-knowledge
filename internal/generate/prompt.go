@@ -21,7 +21,9 @@ import (
 // faq-v2: the user message carries the document title and the heading path,
 // and may carry the text of preceding stub sections; the model is told to
 // return no entries when the section states no answer.
-const PromptVersion = "faq-v2"
+//
+// faq-v3: the output schema bounds every string (see schemaFor).
+const PromptVersion = "faq-v3"
 
 // Versions of the Q&A import. qa-import-v1 candidates are the sheet's own
 // text, verbatim, and have no model. qa-condense-v1 candidates keep the
@@ -54,29 +56,69 @@ const (
 
 const schemaName = "faq_candidates"
 
-// schema is the JSON schema the model is asked to follow. It is also
-// enforced in Go (decodeOutput), because a server's grammar is not trusted.
-var schema = map[string]any{
-	"type":                 "object",
-	"additionalProperties": false,
-	"required":             []string{"candidates"},
-	"properties": map[string]any{
-		"candidates": map[string]any{
-			"type":     "array",
-			"maxItems": MaxCandidatesPerSection,
-			"items": map[string]any{
-				"type":                 "object",
-				"additionalProperties": false,
-				"required":             []string{"question", "alternateQuestions", "answer", "language"},
-				"properties": map[string]any{
-					"question":           map[string]any{"type": "string"},
-					"alternateQuestions": map[string]any{"type": "array", "maxItems": candidate.MaxAlternates, "items": map[string]any{"type": "string"}},
-					"answer":             map[string]any{"type": "string"},
-					"language":           map[string]any{"type": "string", "enum": []string{"EN", "ZH"}},
+// Bounds of the output schema. The grammar of a constrained server ends a
+// string at maxLength, which stops a small model that repeats one sentence
+// until the token cap. The bound is the limit candidate validation applies
+// plus headroom, so validation (which names the rule and feeds the retry), not
+// the grammar, decides what is too long: a string cut by the grammar is longer
+// than the limit and is rejected as too long.
+func headroom(limit int) int { return limit + limit/4 }
+
+// Rough upper bounds of tokens per character, used only to derive max_tokens.
+const (
+	tokensPerCharEN = 0.5
+	tokensPerCharZH = 1.5
+	// tokensPerEntry covers the JSON keys and punctuation of one candidate.
+	tokensPerEntry = 48
+)
+
+func tokensFor(lang domain.Language, chars int) int {
+	per := tokensPerCharEN
+	if lang == domain.LanguageZH {
+		per = tokensPerCharZH
+	}
+	return int(float64(chars)*per) + 1
+}
+
+// schemaFor is the JSON schema the model is asked to follow for a section in
+// lang. It is also enforced in Go (decodeOutput), because a server's grammar
+// is not trusted.
+func schemaFor(lang domain.Language, lim candidate.Limits) map[string]any {
+	q := headroom(candidate.MaxQuestionChars)
+	a := headroom(lim.MaxAnswer(lang))
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"candidates"},
+		"properties": map[string]any{
+			"candidates": map[string]any{
+				"type":     "array",
+				"maxItems": MaxCandidatesPerSection,
+				"items": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"required":             []string{"question", "alternateQuestions", "answer", "language"},
+					"properties": map[string]any{
+						"question":           map[string]any{"type": "string", "maxLength": q},
+						"alternateQuestions": map[string]any{"type": "array", "maxItems": candidate.MaxAlternates, "items": map[string]any{"type": "string", "maxLength": q}},
+						"answer":             map[string]any{"type": "string", "maxLength": a},
+						"language":           map[string]any{"type": "string", "enum": []string{"EN", "ZH"}},
+					},
 				},
 			},
 		},
-	},
+	}
+}
+
+// maxTokensFor derives the completion cap of a section from the schema bounds:
+// the most a schema-conforming answer can take (every entry at its bounds),
+// so a valid answer is never cut and a runaway one ends as soon as it is
+// longer than any valid one. The client clamps it to its own ceiling.
+func maxTokensFor(lang domain.Language, lim candidate.Limits) int {
+	q := headroom(candidate.MaxQuestionChars)
+	a := headroom(lim.MaxAnswer(lang))
+	perEntry := tokensFor(lang, q*(1+candidate.MaxAlternates)+a) + tokensPerEntry
+	return MaxCandidatesPerSection*perEntry + tokensPerEntry
 }
 
 func systemPrompt(lang domain.Language, lim candidate.Limits) string {
@@ -133,14 +175,21 @@ func messages(lang domain.Language, lim candidate.Limits, docTitle string, headi
 
 const condenseSchemaName = "faq_condensed_answer"
 
-// condenseSchema is the JSON schema of the condense answer.
-var condenseSchema = map[string]any{
-	"type":                 "object",
-	"additionalProperties": false,
-	"required":             []string{"answer"},
-	"properties": map[string]any{
-		"answer": map[string]any{"type": "string"},
-	},
+// condenseSchemaFor is the JSON schema of the condense answer in lang.
+func condenseSchemaFor(lang domain.Language, lim candidate.Limits) map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"answer"},
+		"properties": map[string]any{
+			"answer": map[string]any{"type": "string", "maxLength": headroom(lim.MaxAnswer(lang))},
+		},
+	}
+}
+
+// condenseMaxTokens is the completion cap of a condense request.
+func condenseMaxTokens(lang domain.Language, lim candidate.Limits) int {
+	return tokensFor(lang, headroom(lim.MaxAnswer(lang))) + tokensPerEntry
 }
 
 // condensePrompt asks for a short, speakable version of one curated answer
@@ -172,6 +221,25 @@ func feedback(previous string, problems []problem) []llm.Message {
 	}
 	b.WriteString("Return the complete JSON again. Keep the entries that were fine and fix or remove the others. Answers must be one or two short spoken sentences in plain words, in the language of the section.")
 	return []llm.Message{{Role: llm.RoleAssistant, Content: previous}, {Role: llm.RoleUser, Content: b.String()}}
+}
+
+// retryMessages builds the messages of the one retry. When the first attempt
+// left no usable text (the completion was cut off or was not JSON), there is
+// nothing to show the model as its previous answer: an empty assistant turn
+// teaches nothing, so the problems go into the request itself.
+func retryMessages(msgs []llm.Message, raw string, problems []problem) []llm.Message {
+	if raw != "" {
+		return append(append([]llm.Message{}, msgs...), feedback(raw, problems)...)
+	}
+	var b strings.Builder
+	b.WriteString("\n\nYour previous attempt was rejected:\n")
+	for _, p := range problems {
+		b.WriteString("- " + p.String() + "\n")
+	}
+	b.WriteString("Answer again. Keep it short: at most a few entries, each answer one or two short spoken sentences. Never repeat a sentence.")
+	out := append([]llm.Message{}, msgs...)
+	out[len(out)-1].Content += b.String()
+	return out
 }
 
 // problem is one rule a candidate of the model's answer broke.

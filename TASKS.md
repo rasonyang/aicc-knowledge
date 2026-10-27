@@ -119,3 +119,8 @@ Motivated by an offline experiment on a private real sample (no data in this rep
 - [x] Generate: a Q&A row whose condensation fails is kept with the original answer and `NEEDS_SHORTENING` (migration 00015, `QA_NEEDS_SHORTENING`); fake-LLM tests for too long, ungrounded and invalid output.
 - [x] Review: `APPROVE` on a flagged candidate is `SHORTENING_REQUIRED`; `EDIT` validates and clears the flag; `REJECT` works. Publish: a flagged candidate never reaches an index unless edited.
 - [x] README, CHANGELOG and research caveat C4 updated.
+
+## M9. Generate: looping answers and failed sections (issue 3)
+
+- [x] Output schema bounds every string (`maxLength`: validation limit plus 25%); `max_tokens` derived from the bounds; a server that rejects the keyword with HTTP 400 gets the request again without it (`docs/research/05-llm-string-bounds.md`). Verified live on llama-server (loop prompt ends at the bound, `finish_reason: stop`).
+- [x] Per-section outcome `GENERATED` / `EMPTY` / `FAILED` (migration 00017) and `generate --retry-failed [--version]`; a retry after a cut-off first attempt has no empty assistant turn. Verified live on a 27-file subset of the demo corpus (192 sections sent, 0 failed, 0 left without a candidate; 4 sections marked FAILED by hand in a scratch database came back on `--retry-failed`, a second run was a no-op).

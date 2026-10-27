@@ -160,6 +160,38 @@ func (q *Queries) ListCandidatesForExport(ctx context.Context, arg ListCandidate
 	return items, nil
 }
 
+const listLiveCandidateQuestions = `-- name: ListLiveCandidateQuestions :many
+SELECT question, alternate_questions FROM candidates
+WHERE file_version_id = $1 AND state <> 'STALE'
+`
+
+type ListLiveCandidateQuestionsRow struct {
+	Question           string   `json:"question"`
+	AlternateQuestions []string `json:"alternateQuestions"`
+}
+
+// Question and alternates of every candidate of a version in any state but
+// STALE. `generate --retry-failed` seeds its duplicate check with them.
+func (q *Queries) ListLiveCandidateQuestions(ctx context.Context, fileVersionID uuid.UUID) ([]ListLiveCandidateQuestionsRow, error) {
+	rows, err := q.db.Query(ctx, listLiveCandidateQuestions, fileVersionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLiveCandidateQuestionsRow{}
+	for rows.Next() {
+		var i ListLiveCandidateQuestionsRow
+		if err := rows.Scan(&i.Question, &i.AlternateQuestions); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLiveCandidateSections = `-- name: ListLiveCandidateSections :many
 SELECT DISTINCT section_ordinal, source_ref FROM candidates
 WHERE file_version_id = $1 AND state <> 'STALE' AND section_ordinal IS NOT NULL
