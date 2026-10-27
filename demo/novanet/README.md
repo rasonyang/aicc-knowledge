@@ -97,3 +97,51 @@ So a stored `source_ref` matches an expected item when it equals `file#section` 
 - `ACCOUNT_SPECIFIC`: it needs the caller's own data, and the right answer is a transfer or the app.
 
 The marked `liveExample` questions are three or four per language for each of: hit (`COVERED`), `NO_MATCH` (`NOT_COVERED` and `ACCOUNT_SPECIFIC`), and hits only the outdated policy (`OUTDATED_ONLY`), plus one partly covered question each.
+
+## Run it end to end
+
+The commands below load the corpus into a scratch deployment (its own database, S3 prefix and `KB_MEILI_INDEX_PREFIX`), then evaluate the service on it. `kb.sh` stands for any wrapper that runs `aicc-knowledge` with that deployment's `KB_*` environment.
+
+```sh
+# 1. Load. The fact tables live under facts/ and are loaded separately; keep them byte-identical.
+go run ./demo/novanet/gen -out ./corpus -today 2026-10-27
+aws s3 sync ./corpus s3://<bucket>/<prefix> --endpoint-url <endpoint>   # or any S3 client
+kb.sh scan && kb.sh parse
+#    every file version is PARSED except facts/roaming_packs.xlsx (FACTS_INVALID, on purpose)
+
+# 2. Generate. Several processes claim jobs in parallel (FOR UPDATE SKIP LOCKED); match the LLM's slots.
+for i in 1 2 3 4; do kb.sh generate & done; wait
+
+# 3. Review. Edit the workbook, then import it; repeat per batch.
+kb.sh export-review -out review.xlsx
+kb.sh import-review -in review.xlsx -reviewer <name>
+
+# 4. Publish both languages.
+kb.sh publish -language ALL
+
+# 5. Resolve the question set to candidate ids (read-only SQL against KB_DATABASE_URL).
+KB_DATABASE_URL=... KB_S3_PREFIX=<prefix> go run ./demo/novanet/resolve \
+    -questions demo/novanet/questions.yaml -out eval.csv -index index.json \
+    -gaps gaps.txt -lenient-out eval-lenient.csv
+
+# 6. Evaluate, in process and through the running service.
+kb.sh eval -in eval.csv
+kb.sh eval -in eval.csv -url http://127.0.0.1:18480 -api-key "$KEY"
+kb.sh eval -in eval.csv -sweep
+```
+
+### The resolver
+
+`eval` wants candidate ids, and ids exist only after generation, so `demo/novanet/resolve` joins `questions.yaml` to the LIVE publications. An expectation `{file, section, fact}` matches a published item when its `source_ref` equals `<KB_S3_PREFIX><file>#<section>` or continues it with `#`, and its answer (or question) contains `fact` after folding width, case and white space. All matching items are expected ids; a question with no expectation expects `NO_MATCH`.
+
+An expectation that matches nothing is a gap. The resolver never relabels it. It leaves the question out of `-out`, lists it in `-gaps` with the candidates that did come from the section, and gives it a kind in `-index`:
+
+| Kind | Meaning |
+|---|---|
+| `NO_CANDIDATE` | Nothing was generated for the section (generation gap) |
+| `ONLY_REJECTED` | The section's candidates were all rejected in review |
+| `FACT_NOT_STATED` | A published item comes from the section, but none states the `fact` verbatim (often a paraphrase) |
+
+`-lenient-out` writes the `FACT_NOT_STATED` questions with every published item of their section as the expected ids. It is a supplement for judging how much of a gap is only wording; it never replaces the main CSV. Score the gap questions as misses to count a covered question that cannot be answered against recall.
+
+`eval -json` reports aggregates only. For per-category and per-tag figures, run the questions through `POST /v1/search` and join the results to `-index` on the question text and language.
